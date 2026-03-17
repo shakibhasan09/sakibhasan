@@ -1,0 +1,29 @@
+---
+title: Docker Agent
+description: A lightweight Go HTTP API for managing Docker containers via the Docker Engine API. Clean REST interface with API key auth and structured JSON responses.
+date: 2025-06-10
+tags: [Go, Docker, REST API]
+url: https://github.com/shakibhasan09/dockeragent
+stars: 1
+problem: Managing Docker containers on remote servers means SSH + manual commands or heavyweight orchestration tools.
+solution: Built a lightweight Go HTTP API that wraps Docker Engine — clean REST endpoints with API key auth and structured JSON responses.
+results:
+  - Single binary, minimal resource footprint
+  - Full container lifecycle management via REST
+  - Built with Go + Fiber for high performance
+---
+
+## API Overview
+
+```bash
+# List all containers
+curl -H "X-API-Key: your-key" http://localhost:8080/containers
+
+# Start a container
+curl -X POST -H "X-API-Key: your-key" http://localhost:8080/containers/my-app/start
+
+# Get container logs
+curl -H "X-API-Key: your-key" http://localhost:8080/containers/my-app/logs
+```
+
+Built with the [Fiber](https://gofiber.io/) web framework for high performance and low memory footprint.

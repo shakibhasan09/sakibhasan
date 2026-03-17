@@ -1,0 +1,24 @@
+---
+title: Shipping Label Platform
+description: A web platform for purchasing discounted USPS shipping labels — up to 70% off retail rates with instant PDF delivery.
+date: 2026-03-01
+tags: [Cloudflare Worker, Payloadcms, Next.js, TypeScript, Stripe, Tailwind CSS]
+url: https://shipping-labels.sakibhasan.dev/
+type: client
+problem: USPS label buyers were overpaying through retail channels with no bulk discount access or streamlined workflow.
+solution: Built a full-stack platform on Cloudflare's edge — D1, R2, Workers — with Stripe and crypto payments, referral system, and instant PDF delivery.
+results:
+  - Up to 70% savings on USPS labels
+  - Edge-deployed globally via Cloudflare Workers
+  - Hook-driven architecture with zero manual orchestration
+  - Multiple payment methods including Stripe, Coinbase, Venmo, Cash App
+---
+
+![Shipping Labels Dashboard](/images/shipping-labels-dashboard.png)
+
+## Architecture Highlights
+
+- **Hook-driven side effects**: All complex business logic (transaction creation, balance updates, referral commissions, notifications, refunds) is triggered through Payload collection hooks rather than manual orchestration, keeping the codebase declarative and consistent.
+- **Server Actions with Zod validation**: Every mutation goes through a validated server action that returns structured `{ success, error, message }` responses.
+- **Atomic metric updates**: User financial counters are updated with delta operations through a centralized utility, preventing race conditions and ensuring data consistency.
+- **Edge-native deployment**: The entire stack runs on Cloudflare's edge network — D1 for data, R2 for files, Analytics Engine for metrics, Workers for compute.

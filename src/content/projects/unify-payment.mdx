@@ -1,0 +1,34 @@
+---
+title: Unify Payment
+description: A unified TypeScript package for seamless integration with multiple payment providers — Stripe, LemonSqueezy, and more through a single common interface.
+date: 2025-08-15
+tags: [TypeScript, Payments, Node.js]
+url: https://github.com/shakibhasan09/unify-payment
+stars: 27
+problem: Every payment provider has its own SDK and API patterns — switching or supporting multiple means rewriting integration code.
+solution: Created a TypeScript abstraction layer with a single interface for Stripe, LemonSqueezy, and more. Fully typed, tree-shakeable, provider-agnostic.
+results:
+  - 27 GitHub stars
+  - One interface for any payment provider
+  - Zero vendor lock-in
+---
+
+## Quick Start
+
+```typescript
+import { createPayment } from "unify-payment";
+
+const payment = createPayment({
+  provider: "stripe",
+  apiKey: process.env.STRIPE_SECRET_KEY,
+});
+
+const session = await payment.createCheckoutSession({
+  amount: 2999,
+  currency: "usd",
+  successUrl: "https://example.com/success",
+  cancelUrl: "https://example.com/cancel",
+});
+```
+
+Switching to LemonSqueezy is as simple as changing the provider config — your business logic stays the same.
