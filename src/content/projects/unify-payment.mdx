@@ -16,18 +16,19 @@ results:
 ## Quick Start
 
 ```typescript
-import { createPayment } from "unify-payment";
+import { createPayment } from "@unify-payment/node";
 
 const payment = createPayment({
   provider: "stripe",
-  apiKey: process.env.STRIPE_SECRET_KEY,
+  apiKey: process.env.STRIPE_SECRET_KEY!,
 });
 
-const session = await payment.createCheckoutSession({
+const { url } = await payment.createCheckoutSession({
   amount: 2999,
   currency: "usd",
   successUrl: "https://example.com/success",
   cancelUrl: "https://example.com/cancel",
+  productName: "Pro Plan",
 });
 ```
 
