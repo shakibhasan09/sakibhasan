@@ -4,8 +4,9 @@ import { buttonVariants } from "@/components/ui/button";
 import Layout from "@/layouts/Layout.astro";
 import { getCollection } from "astro:content";
 
+const featured = ["docker-agent", "unify-payment"];
 const projects = (await getCollection("projects"))
-    .filter((project) => !project.data.draft)
+    .filter((project) => !project.data.draft && featured.includes(project.id))
     .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
 
 const expertise = [
@@ -67,13 +68,28 @@ const expertise = [
             web apps.
         </h1>
         <p class="text-lg text-muted-foreground leading-relaxed mb-8 max-w-xl">
-            Full-stack engineer specializing in <strong class="text-foreground"
-                >Go</strong
+            Full-stack engineer specializing in <a
+                href="https://go.dev/"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="hover:underline hover:text-foreground transition-colors"
+                ><strong class="text-foreground">Go</strong></a
             >,
-            <strong class="text-foreground">TypeScript</strong>, and
-            <strong class="text-foreground">Cloudflare Workers</strong>. I help
-            startups ship production infrastructure that scales &mdash; from
-            payment systems to container management APIs.
+            <a
+                href="https://www.typescriptlang.org/"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="hover:underline hover:text-foreground transition-colors"
+                ><strong class="text-foreground">TypeScript</strong></a
+            >, and
+            <a
+                href="https://workers.cloudflare.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="hover:underline hover:text-foreground transition-colors"
+                ><strong class="text-foreground">Cloudflare Workers</strong></a
+            >. I help startups ship production infrastructure that scales
+            &mdash; from payment systems to container management APIs.
         </p>
         <div class="flex flex-wrap items-center gap-3">
             <a href="/contact" class={buttonVariants({ size: "lg" })}>
