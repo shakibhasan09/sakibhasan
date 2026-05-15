@@ -1,0 +1,61 @@
+---
+interface Props {
+    cover?: string;
+    title: string;
+    seed: string;
+    size?: "sm" | "lg";
+    hover?: boolean;
+}
+
+const { cover, title, seed, size = "sm", hover = false } = Astro.props;
+
+const gradients = [
+    "linear-gradient(135deg, #5b21b6 0%, #6d28d9 50%, #312e81 100%)",
+    "linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 50%, #0c4a6e 100%)",
+    "linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #115e59 100%)",
+    "linear-gradient(135deg, #9f1239 0%, #be123c 50%, #4c0519 100%)",
+    "linear-gradient(135deg, #c2410c 0%, #ea580c 50%, #7c2d12 100%)",
+    "linear-gradient(135deg, #166534 0%, #15803d 50%, #052e16 100%)",
+    "linear-gradient(135deg, #a21caf 0%, #c026d3 50%, #581c87 100%)",
+    "linear-gradient(135deg, #334155 0%, #475569 50%, #0f172a 100%)",
+];
+
+let hash = 0;
+for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+}
+const gradient = gradients[hash % gradients.length];
+---
+
+<div
+    class:list={[
+        "aspect-16/10 rounded-xl overflow-hidden ring-1 ring-border relative flex items-center justify-center p-[5%]",
+        hover && "transition group-hover:ring-foreground/40",
+    ]}
+    style={`background: ${gradient};`}
+>
+    {
+        cover ? (
+            <img
+                src={cover}
+                alt={title}
+                loading="lazy"
+                class:list={[
+                    "max-w-full max-h-full object-contain rounded-md ring-1 ring-black/20 shadow-2xl",
+                    hover && "transition duration-500 group-hover:scale-[1.02]",
+                ]}
+            />
+        ) : (
+            <span
+                class:list={[
+                    "font-black text-white/95 lowercase tracking-tight leading-none text-center",
+                    size === "lg"
+                        ? "text-4xl sm:text-5xl"
+                        : "text-2xl sm:text-3xl",
+                ]}
+            >
+                {title}
+            </span>
+        )
+    }
+</div>
