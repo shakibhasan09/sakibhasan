@@ -5,29 +5,26 @@ import sharp from "sharp";
 
 const root = path.resolve(fileURLToPath(import.meta.url), "../..");
 const projectsDir = path.join(root, "src/content/projects");
-const publicDir = path.join(root, "public");
 const outFile = path.join(root, "src/generated/cover-gradients.json");
 
 const result = {};
 const files = (await readdir(projectsDir)).filter((f) => f.endsWith(".mdx"));
 
 for (const file of files) {
+    const slug = file.replace(/\.mdx$/, "");
+    if (slug in result) continue;
     const text = await readFile(path.join(projectsDir, file), "utf8");
-    const covers = [
-        text.match(/^cover:\s*(\S+)\s*$/m)?.[1],
-        text.match(/^coverDark:\s*(\S+)\s*$/m)?.[1],
-    ]
-        .filter(Boolean)
-        .map((c) => c.replace(/^["']|["']$/g, ""));
+    const coverRel = (
+        text.match(/^cover:\s*(\S+)\s*$/m)?.[1] ??
+        text.match(/^coverDark:\s*(\S+)\s*$/m)?.[1]
+    )?.replace(/^["']|["']$/g, "");
+    if (!coverRel) continue;
 
-    for (const cover of covers) {
-        if (cover in result) continue;
-        try {
-            const gradients = await extractGradients(path.join(publicDir, cover.replace(/^\//, "")));
-            result[cover] = gradients;
-        } catch (err) {
-            console.warn(`[cover-gradients] failed for ${cover}:`, err.message);
-        }
+    const coverPath = path.resolve(projectsDir, coverRel);
+    try {
+        result[slug] = await extractGradients(coverPath);
+    } catch (err) {
+        console.warn(`[cover-gradients] failed for ${slug}:`, err.message);
     }
 }
 

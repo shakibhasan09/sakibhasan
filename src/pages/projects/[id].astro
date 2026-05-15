@@ -17,7 +17,7 @@ const { Content } = await render(project);
 const siteURL = Astro.site ?? new URL("https://sakibhasan.dev");
 const projectURL = new URL(`/projects/${project.id}`, siteURL).href;
 const coverImage = project.data.cover
-    ? new URL(project.data.cover, siteURL).href
+    ? new URL(project.data.cover.src, siteURL).href
     : new URL("/og-image.png", siteURL).href;
 
 const isOpenSource = project.data.type === "open-source";
@@ -73,7 +73,7 @@ const breadcrumb = {
 <Layout
     title={`${project.data.title} — Sakib Hasan`}
     description={project.data.description}
-    image={project.data.cover ?? "/og-image.png"}
+    image={project.data.cover?.src ?? "/og-image.png"}
     imageAlt={`${project.data.title} — ${project.data.description}`}
     type="article"
     publishedTime={project.data.date}
@@ -96,6 +96,7 @@ const breadcrumb = {
                     title={project.data.title}
                     seed={project.id}
                     size="lg"
+                    eager
                 />
             </div>
 

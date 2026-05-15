@@ -1,16 +1,26 @@
 ---
+import { Image } from "astro:assets";
 import { getCoverGradient, type CoverGradient } from "@/lib/cover-gradient";
 
 interface Props {
-    cover?: string;
-    coverDark?: string;
+    cover?: ImageMetadata;
+    coverDark?: ImageMetadata;
     title: string;
     seed: string;
     size?: "sm" | "lg";
     hover?: boolean;
+    eager?: boolean;
 }
 
-const { cover, coverDark, title, seed, size = "sm", hover = false } = Astro.props;
+const {
+    cover,
+    coverDark,
+    title,
+    seed,
+    size = "sm",
+    hover = false,
+    eager = false,
+} = Astro.props;
 
 const fallbackGradients: CoverGradient[] = [
     {
@@ -53,19 +63,20 @@ for (let i = 0; i < seed.length; i++) {
 }
 const fallback = fallbackGradients[hash % fallbackGradients.length];
 
-const lightGradient =
-    (cover && getCoverGradient(cover)) ||
-    (coverDark && getCoverGradient(coverDark)) ||
-    fallback;
-const darkGradient =
-    (coverDark && getCoverGradient(coverDark)) ||
-    (cover && getCoverGradient(cover)) ||
-    fallback;
+const extracted = getCoverGradient(seed);
+const lightGradient = extracted ?? fallback;
+const darkGradient = extracted ?? fallback;
 
 const imgClass = [
     "max-w-full max-h-full object-contain rounded-md ring-1 ring-black/20 shadow-2xl",
     hover && "transition duration-500 group-hover:scale-[1.02]",
 ];
+
+const widths = size === "lg" ? [480, 720, 1080, 1440] : [360, 540, 720, 1080];
+const sizes =
+    size === "lg"
+        ? "(min-width: 768px) 640px, 100vw"
+        : "(min-width: 640px) 320px, 100vw";
 ---
 
 <div
@@ -79,18 +90,26 @@ const imgClass = [
         cover || coverDark ? (
             <>
                 {cover && (
-                    <img
+                    <Image
                         src={cover}
                         alt={title}
-                        loading="lazy"
+                        widths={widths}
+                        sizes={sizes}
+                        loading={eager ? "eager" : "lazy"}
+                        decoding={eager ? "sync" : "async"}
+                        {...(eager ? { fetchpriority: "high" } : {})}
                         class:list={[...imgClass, coverDark && "cover-img-light"]}
                     />
                 )}
                 {coverDark && (
-                    <img
+                    <Image
                         src={coverDark}
                         alt={title}
-                        loading="lazy"
+                        widths={widths}
+                        sizes={sizes}
+                        loading={eager ? "eager" : "lazy"}
+                        decoding={eager ? "sync" : "async"}
+                        {...(eager ? { fetchpriority: "high" } : {})}
                         class:list={[...imgClass, cover && "cover-img-dark"]}
                     />
                 )}

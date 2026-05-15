@@ -15,19 +15,20 @@ const blog = defineCollection({
 
 const projects = defineCollection({
     loader: glob({ pattern: "**/*.mdx", base: "./src/content/projects" }),
-    schema: z.object({
-        title: z.string(),
-        description: z.string(),
-        date: z.coerce.date(),
-        tags: z.array(z.string()).default([]),
-        url: z.string().url(),
-        cover: z.string().optional(),
-        coverDark: z.string().optional(),
-        coverBg: z.string().optional(),
-        stars: z.number().default(0),
-        type: z.enum(["open-source", "client"]).default("open-source"),
-        draft: z.boolean().default(false),
-    }),
+    schema: ({ image }) =>
+        z.object({
+            title: z.string(),
+            description: z.string(),
+            date: z.coerce.date(),
+            tags: z.array(z.string()).default([]),
+            url: z.string().url(),
+            cover: image().optional(),
+            coverDark: image().optional(),
+            coverBg: z.string().optional(),
+            stars: z.number().default(0),
+            type: z.enum(["open-source", "client"]).default("open-source"),
+            draft: z.boolean().default(false),
+        }),
 });
 
 export const collections = { blog, projects };

@@ -43,7 +43,7 @@ const posts = (await getCollection("blog"))
                 target="_blank"
                 rel="noopener noreferrer"
                 class="underline decoration-primary/40 hover:decoration-primary underline-offset-4"
-                >go</a
+                >golang</a
             >,
             <a
                 href="https://www.typescriptlang.org/"
@@ -147,7 +147,7 @@ const posts = (await getCollection("blog"))
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
             {
-                featured.map((project) => (
+                featured.map((project, i) => (
                     <a
                         href={`/projects/${project.id}`}
                         class="group block"
@@ -159,6 +159,7 @@ const posts = (await getCollection("blog"))
                                 title={project.data.title}
                                 seed={project.id}
                                 hover
+                                eager={i === 0}
                             />
                         </div>
                         <h3 class="font-semibold text-foreground group-hover:text-primary transition lowercase">

@@ -1,34 +1,18 @@
 {
-  "/images/projects/light/docker-agent.webp": {
+  "docker-agent": {
     "light": "linear-gradient(135deg, hsl(214 59% 90%) 0%, hsl(214 59% 78%) 50%, hsl(229 56% 62%) 100%)",
     "dark": "linear-gradient(135deg, hsl(214 67% 60%) 0%, hsl(214 67% 50%) 50%, hsl(229 57% 22%) 100%)"
   },
-  "/images/projects/dark/docker-agent.webp": {
-    "light": "linear-gradient(135deg, hsl(215 67% 90%) 0%, hsl(215 67% 78%) 50%, hsl(229 64% 62%) 100%)",
-    "dark": "linear-gradient(135deg, hsl(215 81% 40%) 0%, hsl(215 81% 30%) 50%, hsl(229 69% 8%) 100%)"
-  },
-  "/images/projects/light/shipping-labels.webp": {
+  "shipping-labels": {
     "light": "linear-gradient(135deg, hsl(216 70% 90%) 0%, hsl(216 70% 78%) 50%, hsl(231 66% 62%) 100%)",
     "dark": "linear-gradient(135deg, hsl(216 91% 60%) 0%, hsl(216 91% 50%) 50%, hsl(231 78% 22%) 100%)"
   },
-  "/images/projects/dark/shipping-labels.webp": {
-    "light": "linear-gradient(135deg, hsl(220 60% 90%) 0%, hsl(220 60% 78%) 50%, hsl(234 57% 62%) 100%)",
-    "dark": "linear-gradient(135deg, hsl(220 69% 55%) 0%, hsl(220 69% 45%) 50%, hsl(234 59% 20%) 100%)"
-  },
-  "/images/projects/light/unify-payment.webp": {
+  "unify-payment": {
     "light": "linear-gradient(135deg, hsl(147 42% 90%) 0%, hsl(147 42% 78%) 50%, hsl(162 40% 62%) 100%)",
     "dark": "linear-gradient(135deg, hsl(147 55% 60%) 0%, hsl(147 55% 50%) 50%, hsl(162 47% 22%) 100%)"
   },
-  "/images/projects/dark/unify-payment.webp": {
-    "light": "linear-gradient(135deg, hsl(170 54% 90%) 0%, hsl(170 54% 78%) 50%, hsl(184 51% 62%) 100%)",
-    "dark": "linear-gradient(135deg, hsl(170 60% 51%) 0%, hsl(170 60% 41%) 50%, hsl(184 51% 16%) 100%)"
-  },
-  "/images/projects/light/worktimetracker.webp": {
+  "worktimetracker": {
     "light": "linear-gradient(135deg, hsl(254 68% 90%) 0%, hsl(254 68% 78%) 50%, hsl(269 65% 62%) 100%)",
     "dark": "linear-gradient(135deg, hsl(254 82% 60%) 0%, hsl(254 82% 50%) 50%, hsl(269 70% 22%) 100%)"
-  },
-  "/images/projects/dark/worktimetracker.webp": {
-    "light": "linear-gradient(135deg, hsl(250 70% 90%) 0%, hsl(250 70% 78%) 50%, hsl(265 66% 62%) 100%)",
-    "dark": "linear-gradient(135deg, hsl(250 89% 60%) 0%, hsl(250 89% 50%) 50%, hsl(265 76% 22%) 100%)"
   }
 }

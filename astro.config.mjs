@@ -8,7 +8,7 @@ import { defineConfig } from "astro/config";
 export default defineConfig({
     site: "https://sakibhasan.dev",
     trailingSlash: "never",
-    adapter: cloudflare({}),
+    adapter: cloudflare({ imageService: "compile" }),
     prefetch: {
         prefetchAll: false,
         defaultStrategy: "hover",
