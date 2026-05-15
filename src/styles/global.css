@@ -149,3 +149,13 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
 }
+
+/* Shiki dual-theme: pick token color per page theme */
+.prose pre,
+.prose pre span {
+    color: var(--shiki-light);
+}
+.dark .prose pre,
+.dark .prose pre span {
+    color: var(--shiki-dark);
+}

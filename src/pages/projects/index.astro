@@ -37,6 +37,7 @@ const allProjects = (await getCollection("projects"))
                             <div class="mb-3">
                                 <ProjectCover
                                     cover={project.data.cover}
+                                    coverDark={project.data.coverDark}
                                     title={project.data.title}
                                     seed={project.id}
                                     hover

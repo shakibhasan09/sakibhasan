@@ -22,6 +22,7 @@ const projects = defineCollection({
         tags: z.array(z.string()).default([]),
         url: z.string().url(),
         cover: z.string().optional(),
+        coverDark: z.string().optional(),
         coverBg: z.string().optional(),
         stars: z.number().default(0),
         type: z.enum(["open-source", "client"]).default("open-source"),

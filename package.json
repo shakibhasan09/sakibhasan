@@ -6,6 +6,11 @@
     "node": ">=22.12.0"
   },
   "scripts": {
+    "build:gradients": "node scripts/build-cover-gradients.mjs",
+    "predev": "pnpm run build:gradients",
+    "prebuild": "pnpm run build:gradients",
+    "prepreview": "pnpm run build:gradients",
+    "predeploy": "pnpm run build:gradients",
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro build && astro preview",
@@ -38,6 +43,7 @@
   },
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.19",
+    "sharp": "^0.34.5",
     "wrangler": "^4.74.0"
   }
 }

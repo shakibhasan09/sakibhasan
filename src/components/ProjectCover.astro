@@ -1,50 +1,100 @@
 ---
+import { getCoverGradient, type CoverGradient } from "@/lib/cover-gradient";
+
 interface Props {
     cover?: string;
+    coverDark?: string;
     title: string;
     seed: string;
     size?: "sm" | "lg";
     hover?: boolean;
 }
 
-const { cover, title, seed, size = "sm", hover = false } = Astro.props;
+const { cover, coverDark, title, seed, size = "sm", hover = false } = Astro.props;
 
-const gradients = [
-    "linear-gradient(135deg, #5b21b6 0%, #6d28d9 50%, #312e81 100%)",
-    "linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 50%, #0c4a6e 100%)",
-    "linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #115e59 100%)",
-    "linear-gradient(135deg, #9f1239 0%, #be123c 50%, #4c0519 100%)",
-    "linear-gradient(135deg, #c2410c 0%, #ea580c 50%, #7c2d12 100%)",
-    "linear-gradient(135deg, #166534 0%, #15803d 50%, #052e16 100%)",
-    "linear-gradient(135deg, #a21caf 0%, #c026d3 50%, #581c87 100%)",
-    "linear-gradient(135deg, #334155 0%, #475569 50%, #0f172a 100%)",
+const fallbackGradients: CoverGradient[] = [
+    {
+        light: "linear-gradient(135deg, hsl(265 70% 90%) 0%, hsl(265 65% 78%) 50%, hsl(255 65% 62%) 100%)",
+        dark: "linear-gradient(135deg, #5b21b6 0%, #6d28d9 50%, #312e81 100%)",
+    },
+    {
+        light: "linear-gradient(135deg, hsl(220 70% 90%) 0%, hsl(220 65% 78%) 50%, hsl(215 65% 62%) 100%)",
+        dark: "linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 50%, #0c4a6e 100%)",
+    },
+    {
+        light: "linear-gradient(135deg, hsl(175 60% 88%) 0%, hsl(175 55% 75%) 50%, hsl(178 50% 58%) 100%)",
+        dark: "linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #115e59 100%)",
+    },
+    {
+        light: "linear-gradient(135deg, hsl(348 75% 90%) 0%, hsl(348 70% 78%) 50%, hsl(348 65% 62%) 100%)",
+        dark: "linear-gradient(135deg, #9f1239 0%, #be123c 50%, #4c0519 100%)",
+    },
+    {
+        light: "linear-gradient(135deg, hsl(22 85% 88%) 0%, hsl(22 80% 75%) 50%, hsl(20 75% 60%) 100%)",
+        dark: "linear-gradient(135deg, #c2410c 0%, #ea580c 50%, #7c2d12 100%)",
+    },
+    {
+        light: "linear-gradient(135deg, hsl(140 55% 88%) 0%, hsl(140 50% 74%) 50%, hsl(142 45% 56%) 100%)",
+        dark: "linear-gradient(135deg, #166534 0%, #15803d 50%, #052e16 100%)",
+    },
+    {
+        light: "linear-gradient(135deg, hsl(295 65% 90%) 0%, hsl(295 60% 78%) 50%, hsl(290 60% 62%) 100%)",
+        dark: "linear-gradient(135deg, #a21caf 0%, #c026d3 50%, #581c87 100%)",
+    },
+    {
+        light: "linear-gradient(135deg, hsl(215 25% 88%) 0%, hsl(215 20% 75%) 50%, hsl(215 25% 55%) 100%)",
+        dark: "linear-gradient(135deg, #334155 0%, #475569 50%, #0f172a 100%)",
+    },
 ];
 
 let hash = 0;
 for (let i = 0; i < seed.length; i++) {
     hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
 }
-const gradient = gradients[hash % gradients.length];
+const fallback = fallbackGradients[hash % fallbackGradients.length];
+
+const lightGradient =
+    (cover && getCoverGradient(cover)) ||
+    (coverDark && getCoverGradient(coverDark)) ||
+    fallback;
+const darkGradient =
+    (coverDark && getCoverGradient(coverDark)) ||
+    (cover && getCoverGradient(cover)) ||
+    fallback;
+
+const imgClass = [
+    "max-w-full max-h-full object-contain rounded-md ring-1 ring-black/20 shadow-2xl",
+    hover && "transition duration-500 group-hover:scale-[1.02]",
+];
 ---
 
 <div
     class:list={[
-        "aspect-16/10 rounded-xl overflow-hidden ring-1 ring-border relative flex items-center justify-center p-[5%]",
+        "cover-bg aspect-16/10 rounded-xl overflow-hidden ring-1 ring-border relative flex items-center justify-center p-[8%]",
         hover && "transition group-hover:ring-foreground/40",
     ]}
-    style={`background: ${gradient};`}
+    style={`--cover-bg-light: ${lightGradient.light}; --cover-bg-dark: ${darkGradient.dark};`}
 >
     {
-        cover ? (
-            <img
-                src={cover}
-                alt={title}
-                loading="lazy"
-                class:list={[
-                    "max-w-full max-h-full object-contain rounded-md ring-1 ring-black/20 shadow-2xl",
-                    hover && "transition duration-500 group-hover:scale-[1.02]",
-                ]}
-            />
+        cover || coverDark ? (
+            <>
+                {cover && (
+                    <img
+                        src={cover}
+                        alt={title}
+                        loading="lazy"
+                        class:list={[...imgClass, coverDark && "cover-img-light"]}
+                    />
+                )}
+                {coverDark && (
+                    <img
+                        src={coverDark}
+                        alt={title}
+                        loading="lazy"
+                        class:list={[...imgClass, cover && "cover-img-dark"]}
+                    />
+                )}
+            </>
         ) : (
             <span
                 class:list={[
@@ -59,3 +109,21 @@ const gradient = gradients[hash % gradients.length];
         )
     }
 </div>
+
+<style>
+    .cover-bg {
+        background: var(--cover-bg-light);
+    }
+    :global(.dark) .cover-bg {
+        background: var(--cover-bg-dark);
+    }
+    :global(.dark) .cover-img-light {
+        display: none;
+    }
+    .cover-img-dark {
+        display: none;
+    }
+    :global(.dark) .cover-img-dark {
+        display: block;
+    }
+</style>
