@@ -1,0 +1,23 @@
+{
+  "name": "Sakib Hasan",
+  "short_name": "Sakib",
+  "description": "Full-stack software engineer working with Go, TypeScript, and Cloudflare Workers.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f9f5d7",
+  "theme_color": "#427b58",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon"
+    }
+  ]
+}

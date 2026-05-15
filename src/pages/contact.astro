@@ -1,11 +1,48 @@
 ---
 import { ContactForm } from "@/components/ContactForm";
 import Layout from "@/layouts/Layout.astro";
+
+const siteURL = Astro.site ?? new URL("https://sakibhasan.dev");
+const contactURL = new URL("/contact", siteURL).href;
+
+const contactSchema = {
+    "@context": "https://schema.org",
+    "@type": "ContactPage",
+    name: "Contact — Sakib Hasan",
+    description:
+        "Get in touch with Sakib Hasan — for freelance, collaboration, or just to say hello.",
+    url: contactURL,
+    mainEntity: {
+        "@type": "Person",
+        name: "Sakib Hasan",
+        url: siteURL.href,
+        sameAs: [
+            "https://github.com/shakibhasan09",
+            "https://x.com/sakibhasanme09",
+            "https://www.facebook.com/sakibhasan.dev/",
+        ],
+    },
+};
+
+const breadcrumb = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Home", item: siteURL.href },
+        {
+            "@type": "ListItem",
+            position: 2,
+            name: "Contact",
+            item: contactURL,
+        },
+    ],
+};
 ---
 
 <Layout
-    title="contact — Sakib Hasan"
-    description="get in touch — for freelance, collaboration, or just to say hello."
+    title="Contact — Sakib Hasan"
+    description="Get in touch with Sakib Hasan — for freelance, collaboration, or just to say hello."
+    structuredData={[contactSchema, breadcrumb]}
 >
     <section>
         <h1

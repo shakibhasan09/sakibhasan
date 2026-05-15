@@ -5,11 +5,52 @@ import Layout from "../../layouts/Layout.astro";
 const posts = (await getCollection("blog"))
     .filter((post) => !post.data.draft)
     .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+
+const siteURL = Astro.site ?? new URL("https://sakibhasan.dev");
+
+const blogSchema = {
+    "@context": "https://schema.org",
+    "@type": "Blog",
+    name: "Notes — Sakib Hasan",
+    description:
+        "Notes on TypeScript, Go, Cloudflare Workers, and building for the web.",
+    url: new URL("/blog", siteURL).href,
+    author: {
+        "@type": "Person",
+        name: "Sakib Hasan",
+        url: siteURL.href,
+    },
+    blogPost: posts.map((post) => ({
+        "@type": "BlogPosting",
+        headline: post.data.title,
+        description: post.data.description,
+        datePublished: post.data.date.toISOString(),
+        url: new URL(`/blog/${post.id}`, siteURL).href,
+        author: { "@type": "Person", name: "Sakib Hasan" },
+        keywords: post.data.tags?.join(", "),
+    })),
+};
+
+const breadcrumb = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Home", item: siteURL.href },
+        {
+            "@type": "ListItem",
+            position: 2,
+            name: "Notes",
+            item: new URL("/blog", siteURL).href,
+        },
+    ],
+};
 ---
 
 <Layout
-    title="notes — Sakib Hasan"
-    description="notes on typescript, go, cloudflare workers, and building for the web."
+    title="Notes — Sakib Hasan"
+    description="Notes on TypeScript, Go, Cloudflare Workers, and building for the web."
+    tags={["TypeScript", "Go", "Cloudflare Workers", "Engineering Notes"]}
+    structuredData={[blogSchema, breadcrumb]}
 >
     <section>
         <h1

@@ -15,7 +15,18 @@ const posts = (await getCollection("blog"))
     .slice(0, 3);
 ---
 
-<Layout>
+<Layout
+    title="Sakib Hasan — full-stack software engineer"
+    description="Sakib Hasan is a full-stack software engineer who helps startups ship backend systems and edge-deployed apps with Go, TypeScript, and Cloudflare Workers."
+    tags={[
+        "Go",
+        "TypeScript",
+        "Cloudflare Workers",
+        "Astro",
+        "Next.js",
+        "Payload CMS",
+    ]}
+>
     <!-- Hero -->
     <section>
         <h1

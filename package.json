@@ -7,14 +7,17 @@
   },
   "scripts": {
     "build:gradients": "node scripts/build-cover-gradients.mjs",
-    "predev": "pnpm run build:gradients",
-    "prebuild": "pnpm run build:gradients",
-    "prepreview": "pnpm run build:gradients",
-    "predeploy": "pnpm run build:gradients",
+    "build:og": "node scripts/build-og-image.mjs",
+    "build:assets": "pnpm run build:gradients && pnpm run build:og",
+    "predev": "pnpm run build:assets",
+    "prebuild": "pnpm run build:assets",
+    "prepreview": "pnpm run build:assets",
+    "predeploy": "pnpm run build:assets",
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro build && astro preview",
     "astro": "astro",
+    "typecheck": "astro check",
     "generate-types": "wrangler types",
     "deploy": "astro build && wrangler deploy",
     "cf-typegen": "wrangler types"
@@ -24,7 +27,8 @@
     "@astrojs/mdx": "^5.0.1",
     "@astrojs/react": "^5.0.0",
     "@astrojs/sitemap": "^3.7.1",
-    "@fontsource-variable/geist": "^5.2.8",
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@fontsource-variable/rubik": "^5.2.8",
     "@tailwindcss/vite": "^4.2.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -42,8 +46,10 @@
     "tw-animate-css": "^1.4.0"
   },
   "devDependencies": {
+    "@astrojs/check": "^0.9.9",
     "@tailwindcss/typography": "^0.5.19",
     "sharp": "^0.34.5",
+    "typescript": "^6.0.3",
     "wrangler": "^4.74.0"
   }
 }
