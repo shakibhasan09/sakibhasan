@@ -1,24 +1,151 @@
 ---
 title: Shipping Label Platform
-description: A web platform for purchasing discounted USPS shipping labels — up to 70% off retail rates with instant PDF delivery.
+description: A full-stack discounted-USPS-label marketplace with multi-gateway payments, referral economics, and a hook-driven Payload ledger — all running on Cloudflare's edge.
 date: 2026-03-01
-tags: [Cloudflare Worker, Payloadcms, Next.js, TypeScript, Stripe, Tailwind CSS]
+tags: [Next.js 16, Payload CMS 3, Cloudflare Workers, D1, R2, OpenNext, Stripe, Coinbase]
 url: https://shipping-labels.sakibhasan.dev/
+cover: /images/projects/shipping-labels.png
+coverBg: "#f9f9f9"
 type: client
-problem: USPS label buyers were overpaying through retail channels with no bulk discount access or streamlined workflow.
-solution: Built a full-stack platform on Cloudflare's edge — D1, R2, Workers — with Stripe and crypto payments, referral system, and instant PDF delivery.
-results:
-  - Up to 70% savings on USPS labels
-  - Edge-deployed globally via Cloudflare Workers
-  - Hook-driven architecture with zero manual orchestration
-  - Multiple payment methods including Stripe, Coinbase, Venmo, Cash App
 ---
 
-![Shipping Labels Dashboard](/images/shipping-labels-dashboard.png)
+## Architecture
 
-## Architecture Highlights
+The platform is a single Cloudflare Worker serving a **Next.js 16 App Router** front end with **Payload CMS 3** as the backend. The whole thing compiles to Workers via **`@opennextjs/cloudflare`**, runs against **D1** for relational data, **R2** for label PDFs, and **Analytics Engine** for event telemetry. There's no Postgres, no Redis, no S3, no separate API service.
 
-- **Hook-driven side effects**: All complex business logic (transaction creation, balance updates, referral commissions, notifications, refunds) is triggered through Payload collection hooks rather than manual orchestration, keeping the codebase declarative and consistent.
-- **Server Actions with Zod validation**: Every mutation goes through a validated server action that returns structured `{ success, error, message }` responses.
-- **Atomic metric updates**: User financial counters are updated with delta operations through a centralized utility, preventing race conditions and ensuring data consistency.
-- **Edge-native deployment**: The entire stack runs on Cloudflare's edge network — D1 for data, R2 for files, Analytics Engine for metrics, Workers for compute.
+```
+┌──────────────────────────────────────────────────────────┐
+│ Cloudflare Worker (OpenNext bundle)                       │
+│                                                           │
+│  Next.js 16 (App Router, Server Actions)                  │
+│      ↓                                                    │
+│  Payload CMS 3  ←  hooks fire on every mutation           │
+│      ↓                                                    │
+│  D1 (SQLite)                                              │
+│                                                           │
+│  Media uploads  →  R2                                     │
+│  Events         →  Analytics Engine                       │
+│  Images         →  Cloudflare Images binding              │
+└──────────────────────────────────────────────────────────┘
+```
+
+## The financial model
+
+Three things have to stay consistent on every label sale:
+
+1. The **Labels** record (what the buyer asked for)
+2. The **Transactions** ledger (immutable record of money moving)
+3. The user's **metric fields** (`currentBalance`, `totalSpend`, `totalLabels`, `referralBalance`, `totalReferralEarnings`, ...)
+
+The mistake would be to write that consistency logic in a Server Action. Server Actions are entry points, not invariants — a second entry point would duplicate the rules and the rules would drift. Instead the rules live in **Payload collection hooks**, and Server Actions just *create the records*.
+
+### Hook 1 — label creation cascades a charge
+
+`src/collections/Labels/hooks/createTransaction.ts` (afterChange on `create`):
+
+1. Look up the price from the **Weights** collection by `shippingType + weight range`.
+2. Compute `totalAmount = price × recipientCount`.
+3. Write a `Transactions` row, `type: "charge"`.
+4. Call `updateUserMetrics(payload, userId, { totalLabels: +1, totalSpend: +totalAmount, currentBalance: -totalAmount })`.
+5. Log one Analytics Engine event per recipient (shipping type, state, cost) and one for the transaction.
+
+A single Server Action call — "create this label" — produces a label row, a transaction row, three counter deltas, and N+1 analytics events. The Server Action knows none of this.
+
+### Hook 2 — referral commissions on `awaiting`
+
+`src/collections/Labels/hooks/creditReferralOnAwaiting.ts` fires when a label transitions to `status: "awaiting"`:
+
+1. Look up an active (non-expired) **Referrals** row where the label's owner is the `referredUser`.
+2. Compute `commission = chargeAmount × commissionPercent / 100`.
+3. Write a `Transactions` row for the *referrer* (not the buyer), `type: "referral"`.
+4. Increment `Referral.totalEarnings`.
+5. Bump the referrer's `referralBalance` and `totalReferralEarnings`.
+
+Commission is paid on the *first delivery handoff*, not on purchase — so cancellations before pickup never trigger a payout in the first place. That's a business rule, encoded once, in one hook.
+
+### Hook 3 — refunds reverse everything
+
+`src/collections/Labels/hooks/refundOnStatusChange.ts` fires when a label transitions to `status: "refunded"`:
+
+1. Find the original `type: "charge"` transaction.
+2. Bail out if a refund already exists for this label (idempotency).
+3. Write a `type: "refund"` transaction for the original amount.
+4. If a referral commission was paid on this label:
+   - Mark the referral transaction `status: "cancelled"`.
+   - Decrement the referrer's `referralBalance` and `totalReferralEarnings`.
+   - Decrement `Referral.totalEarnings`.
+
+The forward path and the reverse path are *mirror images of each other*, and both go through the same delta utility. That symmetry is what makes the ledger trustworthy.
+
+## Atomic counter updates
+
+```typescript
+export async function updateUserMetrics(
+    payload: BasePayload,
+    userId: string,
+    deltas: Record<string, number>,
+) {
+    const user = await payload.findByID({ collection: "users", id: userId, select });
+    const data: Record<string, number> = {};
+    for (const field of fields) {
+        const current = (user[field] as number) ?? 0;
+        data[field] = Math.max(0, current + deltas[field]);   // floor at zero
+    }
+    await payload.update({ collection: "users", id: userId, data });
+}
+```
+
+Three properties matter:
+
+- **Delta-shaped API** — callers pass `+1` or `-50`, never absolute values. No two callers compute the new total independently and race each other.
+- **Floor at zero** — refunds and reversals can't drive a balance negative even when the bookkeeping is wrong elsewhere. The ledger is the source of truth; counters are a fast read-side projection.
+- **Single `payload.update` write** — all deltas land in one SQL UPDATE so a partial failure can't leave half the counters touched.
+
+## Payments — three gateways, one ledger
+
+| Gateway | Path | Verification |
+|---|---|---|
+| **Stripe** | `POST /api/transactions/stripe/callback` on `checkout.session.completed` | HMAC signature against webhook secret |
+| **Coinbase Commerce** | `POST /api/transactions/coinbase/callback` on `charge:confirmed` | HMAC-SHA256 against shared secret |
+| **Manual** (Venmo, Cash App, Zelle) | Admin-initiated Server Action | Manual review |
+
+All three roads end the same way: a `Transactions` row of `type: "topup"`, status `confirmed`. The Transactions `afterChange` hook bumps `currentBalance` via the same `updateUserMetrics` utility used by labels. Adding a fourth gateway means writing one webhook handler and inserting one row — the rest cascades.
+
+## Collections
+
+| Collection | Role |
+|---|---|
+| `Users` | Auth, profile, referral code, all metric fields (read-only in admin) |
+| `Labels` | Core transaction entity, six-state status machine, `pdf` upload field |
+| `Transactions` | Immutable ledger — `charge`, `refund`, `referral`, `topup`, `withdrawal` |
+| `Addresses` | Saved address book with `defaultAddress` |
+| `Packages` | Reusable package templates |
+| `Referrals` | Referrer ↔ referred-user with expiry and commission percent |
+| `Notifications` | User-facing notifications honoring per-user preferences |
+| `Tickets` | Support threads |
+| `ShippingTypes` | Carrier catalog |
+| `Weights` | Pricing matrix — `(shippingType, weightRange) → price` |
+| `Media` | R2-backed file uploads |
+
+## Storage and delivery
+
+Label PDFs uploaded into the `Labels.pdf` field are stored in **R2** via `@payloadcms/storage-r2`. Delivery goes through the **Cloudflare Images** binding so PDFs (and the marketing site's images) are cached at the edge and served with image-format negotiation where appropriate. There's no separate CDN to configure — the data plane *is* the CDN.
+
+## Frontend
+
+Three route groups under `src/app/(frontend)/`:
+
+- `(landingpage)` — `/`, `/signin`, `/signup`
+- `(dashboard)` — `/overview`, `/labels`, `/addresses`, `/packages`, `/transactions`, `/referrals`, `/tickets`, `/settings`
+- `(payload)` — `/admin` (Payload's auto-generated admin UI)
+
+No `middleware.ts`. Every Server Action starts with `const { user } = await checkAuthorization(payload)`, which calls `payload.auth({ headers })` and redirects to `/signin` on miss. Putting the check at the action boundary (not in middleware) means it runs in the same context as the mutation, with the same Payload instance, with no cookie-passing dance.
+
+Server Actions return `{ success?: true, error?: string, message?: string }` envelopes and call `revalidatePath` to invalidate Next.js cache on success.
+
+## Architectural decisions worth calling out
+
+- **Hooks own business rules, Server Actions own entry points.** If a rule lives in two Server Actions, it'll drift. A `Labels.afterChange` hook fires no matter who creates the label — admin panel, customer Server Action, future API integration.
+- **Ledger first, counters second.** Counters are a denormalized read-side projection. The transactions table is canon. Any counter can be rebuilt from a `SUM` over transactions.
+- **Edge-native or not at all.** D1, R2, Analytics Engine, Email Workers, Cloudflare Images — every binding is a Cloudflare primitive. No external services means no extra IAM, no extra VPC, no extra latency.
+- **Atomic deltas with a zero floor.** Most "race condition in our balances" stories end with a negative balance in production. `Math.max(0, current + delta)` is a cheap safety net underneath the real fix (the ledger).

@@ -1,0 +1,67 @@
+---
+title: WorkTimeTracker
+description: A multi-tenant time tracking, invoicing, and team reporting platform with realtime multi-device timers — built on TanStack Start, Cloudflare Durable Objects, and D1.
+date: 2026-05-14
+tags: [TanStack Start, React 19, Cloudflare Workers, Durable Objects, D1, Drizzle, WebSockets]
+url: https://worktimetracker.sakibhasan.dev
+cover: /images/projects/worktimetracker.png
+coverBg: "#0e1121"
+type: client
+---
+
+## Architecture
+
+WorkTimeTracker is a single Cloudflare Worker serving SSR React (TanStack Start) with the data plane spread across **D1** (relational ledger), **Durable Objects** (realtime state), **Queues** (async work), and **Email Workers** (delivery). Every route lives under a dynamic `$org` segment so the URL itself encodes tenancy.
+
+### Realtime layer — why two Durable Objects
+
+The hard problem in a time tracker isn't storing entries; it's making a running timer feel real across devices. A user can start a timer on their laptop, pause it on their phone in a meeting, and resume it back at the desk — and the team's dashboard should reflect every transition immediately.
+
+There are two DOs because the read/write shapes are different:
+
+- **`UserTimerDO`** — one per user, owns `RunningTimerState` (`isRunning`, `startedAtMs`, `pausedAtMs`, `accumulatedMs`, current task/project/tags). WebSocket-attached; every device the user opens attaches to the same DO and receives broadcasts on every state change. Conflict detection rejects "start a new timer" from device B while device A already has one running.
+- **`OrgPresenceDO`** — one per organization, holds a `Map<userId, OrgPresenceEntry>` of who's tracking right now and what they're working on. Subscribers (team viewers on the `/activity` page) attach via WebSocket and receive a snapshot on connect, then incremental `upsert`/`remove` deltas.
+
+The flow: `UserTimerDO` mutates state → calls `OrgPresenceDO.fetch("/upsert")` → presence DO broadcasts to all subscribed teammates. Write-heavy state stays in one DO; read-heavy fanout stays in another.
+
+### Persistence — D1 + Drizzle
+
+Long-term data lives in **D1** through Drizzle. The schema is organized around the org boundary:
+
+- **Identity** — `user`, `account`, `session`, `passkey`, `twoFactor`, `apikey` (driven by better-auth)
+- **Tenancy** — `organization`, `member`, `invitation`
+- **Tracking** — `timeEntry`, `timeEntryTag`, `runningTimer`, `tag`, `project`, `projectMember`, `client`
+- **Billing** — `invoice`, `invoiceLineItem`, `timesheetPeriod`
+- **Activity** — `activityEvent` (audit log), `notification`, `sentEmail`
+- **Integrations** — `orgSlackConnection`, `webhookEndpoint`, `orgAirwallexConfig`, `organizationSettings`, `userPreference`
+
+When a timer stops, the DO calls `commitTimerEntry()`, which inserts the `timeEntry`, links tags via `timeEntryTag`, and records an `activityEvent` in one transaction. The DO keeps the running cache; D1 is authoritative for committed history.
+
+### Async work — Queues and Crons
+
+Two Queues handle work that shouldn't block a request:
+
+- **`worktimetracker-emails`** — better-auth, password resets, notifications, and digests render React Email templates and ship through Cloudflare Email Workers. Batched up to 10 messages with 3 retries before the DLQ catches anything permanently broken.
+- **`worktimetracker-lifecycle`** — account and org deletions. Polar subscription revocation is a third-party call that can be slow or transiently fail; queueing it means the user gets a "deletion requested" response immediately and the actual cascading delete runs with exponential backoff.
+
+Three cron triggers run the recurring work:
+
+| Cron | Job |
+|---|---|
+| `*/30 * * * *` | Scan for timers running over 12 hours (probably forgotten) and notify the owner |
+| `0 9 * * *` | Email orgs about overdue invoices |
+| `0 13 * * 1` | Weekly digest (hours tracked, billable breakdown, revenue) |
+
+### Auth and billing
+
+**better-auth** is the identity layer — passkeys (WebAuthn), TOTP 2FA, API keys, Google SSO when configured. Sessions carry an `activeOrganizationId`, and `orgScopedMiddleware` re-validates membership on every server fn.
+
+**Polar** is the payment processor. Plan tiers (free / pro / team / business) live in `billing-config.ts`. Features like Slack integration are gated through `PlanFeatureError` thrown server-side, so plan checks happen where the data is, not in client guards. Polar webhooks invalidate a KV-cached plan record on subscription changes.
+
+### Slack integration
+
+Two paths: an OAuth flow (`getSlackInstallUrl()` → callback at `/api/slack/oauth` → `upsertSlackConnection()`) and a manual bot-token paste for orgs that don't want OAuth. `postSlackMessage()` is called from invoice-paid, time-entry-committed, and digest hooks. Plan-gated to team and business.
+
+## Why the stack works for this problem
+
+The shape of the workload — bursty per-user writes, fanout reads to a small team, periodic email, and rare expensive deletions — maps cleanly onto Workers primitives. Durable Objects replace a Redis-backed WebSocket server with no infrastructure to run; D1 replaces a hosted Postgres at this scale; Queues + Crons replace a job runner. The result is a SaaS where the only thing to scale is the Polar bill.

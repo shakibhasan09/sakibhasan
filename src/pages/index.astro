@@ -1,280 +1,246 @@
 ---
-import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
 import Layout from "@/layouts/Layout.astro";
 import { getCollection } from "astro:content";
 
-const featured = ["docker-agent", "unify-payment"];
-const projects = (await getCollection("projects"))
-    .filter((project) => !project.data.draft && featured.includes(project.id))
+const allProjects = (await getCollection("projects"))
+    .filter((project) => !project.data.draft)
     .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
 
-const expertise = [
-    {
-        label: "Backend & Infrastructure",
-        items: [
-            "Go",
-            "Fiber",
-            "PostgreSQL",
-            "Redis",
-            "Docker",
-            "Kubernetes",
-            "Kafka",
-        ],
-    },
-    {
-        label: "Edge & Cloud",
-        items: [
-            "Cloudflare Workers",
-            "D1",
-            "R2",
-            "KV",
-            "Durable Objects",
-            "Queues",
-        ],
-    },
-    {
-        label: "Full-Stack Web",
-        items: [
-            "TypeScript",
-            "Next.js",
-            "Astro",
-            "SvelteKit",
-            "Payload CMS",
-            "Tailwind CSS",
-        ],
-    },
-];
+const featured = allProjects.slice(0, 4);
+
+const posts = (await getCollection("blog"))
+    .filter((post) => !post.data.draft)
+    .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf())
+    .slice(0, 3);
+
+const fallbackGradient =
+    "linear-gradient(135deg, #d3869b 0%, #8f3f71 50%, #427b58 100%)";
 ---
 
 <Layout>
     <!-- Hero -->
-    <section class="py-4">
-        <div class="flex items-center gap-3 mb-3">
-            <Badge
-                className="gap-1.5 py-1 h-auto text-emerald-400 bg-emerald-500/5 px-3 dark:shadow"
-                variant="outline"
-            >
-                <span
-                    class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"
-                ></span>
-                Available for work</Badge
-            >
-        </div>
+    <section>
         <h1
-            class="text-3xl sm:text-4xl font-bold text-foreground leading-tight mb-4"
+            class="text-6xl sm:text-7xl font-black tracking-tight leading-none mb-4 lowercase"
         >
-            I build scalable backend systems<br class="hidden sm:block" /> and edge-deployed
-            web apps.
+            sakib
         </h1>
-        <p class="text-lg text-muted-foreground leading-relaxed mb-8 max-w-xl">
-            Full-stack engineer specializing in <a
+        <p class="text-xl sm:text-2xl leading-snug max-w-xl mb-6">
+            i'm sakib, a full-stack software engineer who loves building stuff
+            on the <span class="hl">web</span>. i help startups ship backend
+            systems and edge-deployed apps with
+            <a
                 href="https://go.dev/"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="hover:underline hover:text-foreground transition-colors"
-                ><strong class="text-foreground">Go</strong></a
+                class="underline decoration-primary/40 hover:decoration-primary underline-offset-4"
+                >go</a
             >,
             <a
                 href="https://www.typescriptlang.org/"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="hover:underline hover:text-foreground transition-colors"
-                ><strong class="text-foreground">TypeScript</strong></a
+                class="underline decoration-primary/40 hover:decoration-primary underline-offset-4"
+                >typescript</a
             >, and
             <a
                 href="https://workers.cloudflare.com/"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="hover:underline hover:text-foreground transition-colors"
-                ><strong class="text-foreground">Cloudflare Workers</strong></a
-            >. I help startups ship production infrastructure that scales
-            &mdash; from payment systems to container management APIs.
+                class="underline decoration-primary/40 hover:decoration-primary underline-offset-4"
+                >cloudflare workers</a
+            >.
         </p>
-        <div class="flex flex-wrap items-center gap-3">
-            <a href="/contact" class={buttonVariants({ size: "lg" })}>
-                Start a project
+
+        <div class="flex items-center gap-4 text-foreground">
+            <a
+                href="/contact"
+                aria-label="Email"
+                class="hover:text-primary transition"
+            >
+                <svg
+                    class="h-5 w-5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    viewBox="0 0 24 24"
+                    ><path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M3 8l9 6 9-6M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                    ></path></svg
+                >
             </a>
             <a
                 href="https://github.com/shakibhasan09"
                 target="_blank"
                 rel="noopener noreferrer"
-                class={buttonVariants({
-                    size: "lg",
-                    variant: "secondary",
-                })}
+                aria-label="GitHub"
+                class="hover:text-primary transition"
             >
-                <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"
+                <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"
                     ><path
                         d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
                     ></path></svg
                 >
-                GitHub
             </a>
             <a
                 href="https://x.com/sakibhasanme09"
                 target="_blank"
                 rel="noopener noreferrer"
-                class={buttonVariants({
-                    size: "lg",
-                    variant: "secondary",
-                })}
+                aria-label="X (Twitter)"
+                class="hover:text-primary transition"
             >
-                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"
+                <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"
                     ><path
                         d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"
                     ></path></svg
                 >
-                Twitter / X
+            </a>
+            <a
+                href="https://www.facebook.com/sakibhasan.dev/"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Facebook"
+                class="hover:text-primary transition"
+            >
+                <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"
+                    ><path
+                        d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"
+                    ></path></svg
+                >
             </a>
         </div>
     </section>
 
-    <!-- Case Studies -->
-    <section class="py-10">
-        <div class="flex items-center justify-between mb-6">
-            <h2
-                class="text-xs font-medium uppercase tracking-wider text-muted-foreground"
-            >
-                Selected Work
-            </h2>
+    <!-- Selected Work -->
+    <section class="mt-20">
+        <div class="flex items-baseline justify-between mb-6">
+            <h2 class="text-3xl font-bold lowercase">some of my work</h2>
             <a
                 href="/projects"
-                class="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                class="text-sm text-muted-foreground hover:text-primary inline-flex items-center gap-1 transition"
             >
-                View all &rarr;
+                view all
+                <svg
+                    class="h-3 w-3"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    viewBox="0 0 24 24"
+                    ><path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M7 17L17 7M17 7H8M17 7v9"></path></svg
+                >
             </a>
         </div>
-        <div class="space-y-6">
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
             {
-                projects.map((project) => (
+                featured.map((project) => (
                     <a
                         href={`/projects/${project.id}`}
-                        class="block rounded-lg border border-border p-6 hover:bg-muted/50 transition-all group"
+                        class="group block"
                     >
-                        <div class="flex items-start justify-between mb-1">
-                            <div>
-                                <span class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                                    {project.data.type === "client"
-                                        ? "Client Work"
-                                        : "Open Source"}
-                                </span>
-                                <h3 class="font-semibold text-foreground text-lg mt-1">
-                                    {project.data.title}
-                                </h3>
-                            </div>
-                            <svg
-                                class="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors mt-2 shrink-0"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                            >
-                                <path
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    stroke-width="1.5"
-                                    d="M9 5l7 7-7 7"
+                        <div
+                            class="aspect-16/10 rounded-xl overflow-hidden ring-1 ring-border mb-3 relative group-hover:ring-foreground/40 transition bg-muted"
+                            style={!project.data.cover
+                                ? `background: ${fallbackGradient}`
+                                : undefined}
+                        >
+                            {project.data.cover ? (
+                                <img
+                                    src={project.data.cover}
+                                    alt={project.data.title}
+                                    loading="lazy"
+                                    class="absolute inset-0 h-full w-full object-cover object-top group-hover:scale-[1.02] transition duration-500"
                                 />
-                            </svg>
+                            ) : (
+                                <div class="absolute inset-0 flex items-end p-4">
+                                    <span class="text-2xl sm:text-3xl font-black text-white/95 lowercase tracking-tight leading-none">
+                                        {project.data.title}
+                                    </span>
+                                </div>
+                            )}
                         </div>
-
-                        {project.data.problem && (
-                            <div class="mt-3 space-y-2">
-                                <p class="text-sm text-muted-foreground">
-                                    <span class="font-medium text-foreground">
-                                        Problem:
-                                    </span>{" "}
-                                    {project.data.problem}
-                                </p>
-                                <p class="text-sm text-muted-foreground">
-                                    <span class="font-medium text-foreground">
-                                        Solution:
-                                    </span>{" "}
-                                    {project.data.solution}
-                                </p>
-                            </div>
-                        )}
-
-                        {project.data.results.length > 0 && (
-                            <ul class="mt-3 space-y-1">
-                                {project.data.results.map((result: string) => (
-                                    <li class="flex items-center gap-2 text-sm text-emerald-500">
-                                        <svg
-                                            class="h-3.5 w-3.5 shrink-0"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            viewBox="0 0 24 24"
-                                        >
-                                            <path
-                                                stroke-linecap="round"
-                                                stroke-linejoin="round"
-                                                stroke-width="2"
-                                                d="M5 13l4 4L19 7"
-                                            />
-                                        </svg>
-                                        <span class="text-foreground">
-                                            {result}
-                                        </span>
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
-
-                        <div class="flex flex-wrap gap-2 mt-4">
-                            {project.data.tags.map((tag: string) => (
-                                <span class="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                                    {tag}
-                                </span>
-                            ))}
-                        </div>
+                        <h3 class="font-semibold text-foreground group-hover:text-primary transition lowercase">
+                            {project.data.title}
+                        </h3>
+                        <p class="text-sm text-muted-foreground leading-snug">
+                            {project.data.description}
+                        </p>
                     </a>
                 ))
             }
         </div>
     </section>
 
-    <!-- Expertise -->
-    <section class="py-8">
-        <h2
-            class="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-6"
-        >
-            What I Work With
-        </h2>
-        <div class="space-y-4">
-            {
-                expertise.map((group) => (
-                    <div>
-                        <h3 class="text-sm font-medium text-foreground mb-2">
-                            {group.label}
-                        </h3>
-                        <div class="flex flex-wrap gap-2">
-                            {group.items.map((tech) => (
-                                <span class="rounded-md bg-muted border border-border px-3 py-1.5 text-sm text-foreground">
-                                    {tech}
+    <!-- Writing -->
+    {
+        posts.length > 0 && (
+            <section class="mt-20">
+                <h2 class="text-3xl font-bold lowercase mb-4">writing</h2>
+                <ul class="space-y-2">
+                    {posts.map((post) => (
+                        <li>
+                            <a
+                                href={`/blog/${post.id}`}
+                                class="group flex items-baseline gap-3 py-1"
+                            >
+                                <span class="text-primary shrink-0">→</span>
+                                <span class="flex-1 group-hover:text-primary transition lowercase">
+                                    {post.data.title}
                                 </span>
-                            ))}
-                        </div>
-                    </div>
-                ))
-            }
-        </div>
-    </section>
+                                <time
+                                    class="text-sm text-muted-foreground shrink-0 tabular-nums"
+                                    datetime={post.data.date.toISOString()}
+                                >
+                                    {post.data.date.toLocaleDateString(
+                                        "en-US",
+                                        {
+                                            year: "numeric",
+                                            month: "short",
+                                            day: "numeric",
+                                        },
+                                    )}
+                                </time>
+                            </a>
+                        </li>
+                    ))}
+                </ul>
+                <a
+                    href="/blog"
+                    class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-primary mt-4 transition"
+                >
+                    more notes →
+                </a>
+            </section>
+        )
+    }
 
-    <!-- CTA -->
-    <section class="py-10">
-        <div
-            class="rounded-lg border border-border bg-muted/30 p-8 text-center"
-        >
-            <h2 class="text-xl font-semibold text-foreground mb-2">
-                Have a project in mind?
-            </h2>
-            <p class="text-muted-foreground mb-6 max-w-md mx-auto">
-                I'm currently available for freelance and contract work. Let's
-                talk about what you're building.
-            </p>
-            <a href="/contact" class={buttonVariants({ size: "lg" })}>
-                Start a conversation
-            </a>
-        </div>
+    <!-- What I work with -->
+    <section class="mt-20">
+        <h2 class="text-3xl font-bold lowercase mb-4">tools i reach for</h2>
+        <p class="text-base text-muted-foreground leading-relaxed">
+            <span class="text-foreground font-medium">go</span> &middot;
+            <span class="text-foreground font-medium">typescript</span> &middot;
+            <span class="text-foreground font-medium">next.js</span> &middot;
+            <span class="text-foreground font-medium">astro</span> &middot;
+            <span class="text-foreground font-medium">payload cms</span>
+            &middot;
+            <span class="text-foreground font-medium">postgres</span> &middot;
+            <span class="text-foreground font-medium">redis</span> &middot;
+            <span class="text-foreground font-medium">docker</span> &middot;
+            <span class="text-foreground font-medium"
+                >cloudflare workers</span
+            > &middot;
+            <span class="text-foreground font-medium">d1</span> &middot;
+            <span class="text-foreground font-medium">r2</span> &middot;
+            <span class="text-foreground font-medium">kv</span> &middot;
+            <span class="text-foreground font-medium">durable objects</span>
+            &middot;
+            <span class="text-foreground font-medium">tailwind</span>
+        </p>
     </section>
 </Layout>

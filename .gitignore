@@ -4,6 +4,8 @@ dist/
 # generated types
 .astro/
 
+/.playwright-cli
+
 # dependencies
 node_modules/
 

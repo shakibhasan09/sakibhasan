@@ -1,35 +1,128 @@
 ---
 title: Unify Payment
-description: A unified TypeScript package for seamless integration with multiple payment providers — Stripe, LemonSqueezy, and more through a single common interface.
+description: A unified TypeScript SDK for 10 payment providers — Stripe, PayPal, Polar, Paddle, LemonSqueezy, Razorpay, Coinbase, Bkash, Nagad, SSLCommerz — behind a single discriminated-union API.
 date: 2025-08-15
-tags: [TypeScript, Payments, Node.js]
+tags: [TypeScript, Payments, SDK, Discriminated Unions, Cloudflare Workers]
 url: https://github.com/shakibhasan09/unify-payment
+cover: /images/projects/unify-payment.png
+coverBg: "#e7e8e9"
 stars: 27
-problem: Every payment provider has its own SDK and API patterns — switching or supporting multiple means rewriting integration code.
-solution: Created a TypeScript abstraction layer with a single interface for Stripe, LemonSqueezy, and more. Fully typed, tree-shakeable, provider-agnostic.
-results:
-  - 27 GitHub stars
-  - One interface for any payment provider
-  - Zero vendor lock-in
 ---
 
-## Quick Start
+## The abstraction
+
+The hard part of "unify N payment providers" is *not* hiding the differences — that road ends in a least-common-denominator API that nobody can actually ship a product on. The hard part is letting consumers stay typed and provider-specific *at the call site* while still moving most of the integration code behind one import.
+
+The answer in `@unify-payment/node` is a **discriminated union of provider configs** + a **conditional type that maps each config to its corresponding params**:
 
 ```typescript
-import { createPayment } from "@unify-payment/node";
+type PaymentConfig =
+  | { provider: "stripe";       apiKey: string; ... }
+  | { provider: "paypal";       clientId: string; clientSecret: string; ... }
+  | { provider: "polar";        accessToken: string; ... }
+  | { provider: "paddle";       apiKey: string; ... }
+  | { provider: "lemonsqueezy"; apiKey: string; ... }
+  // ... 5 more
 
-const payment = createPayment({
-  provider: "stripe",
-  apiKey: process.env.STRIPE_SECRET_KEY!,
-});
+type CheckoutParamsForConfig<T extends PaymentConfig> =
+    T extends StripeConfig        ? StripeCheckoutSessionParams       :
+    T extends PaypalConfig        ? PaypalCheckoutSessionParams       :
+    T extends PolarConfig         ? PolarCheckoutSessionParams        :
+    // ...
+
+interface PaymentInstance<T extends PaymentConfig> {
+    createCheckoutSession(params: CheckoutParamsForConfig<T>): Promise<CheckoutSession>;
+    verifyWebhook?(params: VerifyWebhookParams): Promise<WebhookEvent>;
+}
+
+function createPayment<T extends PaymentConfig>(config: T): PaymentInstance<T>;
+```
+
+At a call site:
+
+```typescript
+const payment = createPayment({ provider: "stripe", apiKey: process.env.STRIPE_SECRET_KEY! });
 
 const { url } = await payment.createCheckoutSession({
-  amount: 2999,
-  currency: "usd",
-  successUrl: "https://example.com/success",
-  cancelUrl: "https://example.com/cancel",
-  productName: "Pro Plan",
+    amount: 2999,
+    currency: "usd",
+    successUrl: "...",
+    cancelUrl: "...",
+    productName: "Pro Plan",
+    metadata: { userId: "..." },     // typed for Stripe
+    overrides: { /* full StripeSDK.Checkout.SessionCreateParams */ },  // escape hatch
 });
 ```
 
-Switching to LemonSqueezy is as simple as changing the provider config — your business logic stays the same.
+Switch `provider: "stripe"` to `provider: "polar"` and TypeScript immediately yells about `productName` and `metadata` not existing on `PolarCheckoutSessionParams` — that's the entire point.
+
+## Provider implementations
+
+Each provider is a thin adapter, not a subclass. Two flavors:
+
+- **Native-SDK wrappers** — Stripe and Paddle. The SDK is the source of truth for types and the wire format; the wrapper exists to normalize the unified shape.
+- **HTTP adapters** — everything else. A shared `UnifyFetch` base class handles JSON encoding, status checking, and error mapping. Each provider implements its own `getApiBaseUrl()` and methods.
+
+A representative HTTP provider — Polar:
+
+```typescript
+class Polar extends UnifyFetch {
+    async getCheckoutUrl(payload: IPolarCheckoutCreatePayload): Promise<string> {
+        const [res] = await this.jsonFetch<IPolarCheckoutResponse>(
+            `${this.getApiBaseUrl()}/checkouts/`,
+            { method: "POST", body: JSON.stringify(payload) },
+        );
+        return res.url;
+    }
+
+    async verifySignature(payload: { body, signature, secret, webhookId, timestamp }) {
+        const key = await crypto.subtle.importKey("raw", encoder.encode(secret),
+            { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+        const expected = await crypto.subtle.sign("HMAC", key,
+            encoder.encode(`${webhookId}.${timestamp}.${body}`));
+        // constant-time compare with the provided signature
+        return { type: parsed.type, event: parsed.data };
+    }
+}
+```
+
+The `crypto.subtle` API matters: it works in Node 18+ *and* in Cloudflare Workers, edge runtimes, and browsers. No `node:crypto` import, no platform branching.
+
+## Amount normalization
+
+Stripe takes cents. PayPal takes decimals. Bkash takes BDT integers. SSLCommerz takes decimals with two places. Coinbase wants a string. Picking a single convention prevents an entire class of bugs:
+
+**Every public method in `@unify-payment/node` takes the amount in the smallest unit (cents, paise, poisha).** Providers that natively expect decimals divide by 100 inside the adapter. Callers never have to remember which provider wants what — they always send `2999`, never `29.99`.
+
+## Webhook verification — optional by design
+
+Not every provider signs webhooks. Forcing a `verifyWebhook` method onto Bkash or Nagad (which don't) would push that burden onto every consumer, even ones who never plan to switch to those providers.
+
+The interface declares `verifyWebhook?` as optional. TypeScript then tells consumers, at compile time, whether they have a verifier or have to handle the call as `undefined`. Stripe / LemonSqueezy / Polar / Razorpay / Paddle / Coinbase implement it; the three Bangladesh providers don't, and the type system reflects that truth.
+
+The webhook event itself is normalized:
+
+```typescript
+interface WebhookEvent {
+    type: string;    // "checkout.session.completed", "order.paid", ...
+    data: unknown;   // provider payload (provider-specific shape)
+    raw: unknown;    // raw event for debugging
+}
+```
+
+## Build, ship, test
+
+- **Monorepo** — pnpm + Turbo. `packages/node/` is the only published package; `apps/test/` is a Cloudflare Workers Vitest harness.
+- **Bundle** — tsup outputs CJS + ESM + `.d.ts`. Stripe and Paddle SDKs are the only non-trivial runtime deps; the eight HTTP providers add zero footprint beyond their own type definitions.
+- **Release** — Changesets. Every PR adds a changeset markdown file; `changesets publish` bumps version and ships to npm.
+- **Edge testing** — `@cloudflare/vitest-pool-workers` runs the test suite inside the actual Workers runtime. The library is verified to work where it'll be deployed.
+
+## Tradeoffs
+
+| Choice | Why |
+|---|---|
+| **Discriminated unions, not inheritance** | Each provider is fully independent. Adding one means adding a config type, a params type, a class, and a switch case — no base-class refactor. |
+| **Conditional type for params** | The factory returns a typed instance whose `createCheckoutSession` signature is provider-specific. The IDE does the work the docs would otherwise have to. |
+| **`overrides` escape hatch on Stripe** | The unified params cover 90% of usage. The other 10% gets `overrides?: Partial<StripeSDK.Checkout.SessionCreateParams>` — no need to ever drop down to the native SDK. |
+| **`crypto.subtle` over `node:crypto`** | Works in Workers, Deno, browsers, and Node 18+ unchanged. The cost is async signature ops, which were already async anyway. |
+| **Optional webhook method** | Provider parity is a *coverage* goal, not an API design goal. Pretending Bkash has signed webhooks is worse than admitting it doesn't. |
