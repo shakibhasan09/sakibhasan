@@ -10,11 +10,13 @@ coverBg: "#e7e8e9"
 stars: 27
 ---
 
-## The abstraction
+## The thing I didn't want to build
 
-The hard part of "unify N payment providers" is *not* hiding the differences — that road ends in a least-common-denominator API that nobody can actually ship a product on. The hard part is letting consumers stay typed and provider-specific *at the call site* while still moving most of the integration code behind one import.
+The lazy version of "unify ten payment providers" is to design a single normalized API and hide every difference behind it. I tried that first. It produces a least-common-denominator surface that nobody can actually ship a product on, because Stripe has line items and Polar has subscription seats and Razorpay has Indian-specific tax rails and Bkash has nothing resembling Western metadata. Whatever you carve out as the common shape is by definition the smallest set.
 
-The answer in `@unify-payment/node` is a **discriminated union of provider configs** + a **conditional type that maps each config to its corresponding params**:
+The version that ended up working flips the problem. Instead of hiding the provider, the SDK *knows* which provider you picked and types your call site to that provider — so a Stripe instance accepts Stripe params, a Polar instance accepts Polar params, and TypeScript catches the mismatch the moment you change one to the other. The unification happens in the *factory* and the *webhook event shape*, not the call site.
+
+## How that's expressed in types
 
 ```typescript
 type PaymentConfig =
@@ -50,21 +52,16 @@ const { url } = await payment.createCheckoutSession({
     successUrl: "...",
     cancelUrl: "...",
     productName: "Pro Plan",
-    metadata: { userId: "..." },     // typed for Stripe
-    overrides: { /* full StripeSDK.Checkout.SessionCreateParams */ },  // escape hatch
+    metadata: { userId: "..." },
+    overrides: { /* full Stripe SessionCreateParams */ },
 });
 ```
 
-Switch `provider: "stripe"` to `provider: "polar"` and TypeScript immediately yells about `productName` and `metadata` not existing on `PolarCheckoutSessionParams` — that's the entire point.
+Switch `provider: "stripe"` to `provider: "polar"` and TypeScript immediately complains about `productName` and `metadata` not existing on `PolarCheckoutSessionParams`. That's the whole point: you're not moving to a different SDK, you're typing the difference.
 
 ## Provider implementations
 
-Each provider is a thin adapter, not a subclass. Two flavors:
-
-- **Native-SDK wrappers** — Stripe and Paddle. The SDK is the source of truth for types and the wire format; the wrapper exists to normalize the unified shape.
-- **HTTP adapters** — everything else. A shared `UnifyFetch` base class handles JSON encoding, status checking, and error mapping. Each provider implements its own `getApiBaseUrl()` and methods.
-
-A representative HTTP provider — Polar:
+Each provider is a small adapter, not a subclass. Two flavors. Stripe and Paddle get wrapped around their native SDKs because those SDKs are the source of truth for both types and wire format — the wrapper just normalizes the unified shape. Everything else is an HTTP adapter extending a shared `UnifyFetch` base class that handles JSON encoding, status checking, and error mapping. Each provider implements its own `getApiBaseUrl()` and methods. Polar is a typical example:
 
 ```typescript
 class Polar extends UnifyFetch {
@@ -87,19 +84,15 @@ class Polar extends UnifyFetch {
 }
 ```
 
-The `crypto.subtle` API matters: it works in Node 18+ *and* in Cloudflare Workers, edge runtimes, and browsers. No `node:crypto` import, no platform branching.
+`crypto.subtle` rather than `node:crypto` matters because the SDK is deployed in Workers as often as in Node — the WebCrypto path works in Node 18+, in Workers, in Deno, and in browsers without a platform branch.
 
-## Amount normalization
+## Amounts, one convention
 
-Stripe takes cents. PayPal takes decimals. Bkash takes BDT integers. SSLCommerz takes decimals with two places. Coinbase wants a string. Picking a single convention prevents an entire class of bugs:
+Stripe takes cents. PayPal takes decimals. Bkash takes BDT integers. SSLCommerz takes decimals with two places. Coinbase wants a string. Picking one rule for the SDK prevents an entire class of bugs: every public method takes the amount in the smallest unit (cents, paise, poisha), and providers that natively expect decimals divide by 100 inside the adapter. Callers never have to remember which provider wants what — they always send `2999`, never `29.99`. The first time you ship a $0.30 charge instead of a $30 charge to production, you really start to appreciate this kind of rule.
 
-**Every public method in `@unify-payment/node` takes the amount in the smallest unit (cents, paise, poisha).** Providers that natively expect decimals divide by 100 inside the adapter. Callers never have to remember which provider wants what — they always send `2999`, never `29.99`.
+## Webhook verification is optional on purpose
 
-## Webhook verification — optional by design
-
-Not every provider signs webhooks. Forcing a `verifyWebhook` method onto Bkash or Nagad (which don't) would push that burden onto every consumer, even ones who never plan to switch to those providers.
-
-The interface declares `verifyWebhook?` as optional. TypeScript then tells consumers, at compile time, whether they have a verifier or have to handle the call as `undefined`. Stripe / LemonSqueezy / Polar / Razorpay / Paddle / Coinbase implement it; the three Bangladesh providers don't, and the type system reflects that truth.
+Not every provider signs webhooks. Forcing a `verifyWebhook` method onto Bkash or Nagad (which don't) would push that burden onto every consumer, even ones who never plan to switch to those providers. So the interface declares `verifyWebhook?` as optional, and TypeScript tells consumers at compile time whether their provider has a verifier or whether they need to handle the call as `undefined`. Stripe, LemonSqueezy, Polar, Razorpay, Paddle, and Coinbase implement it. The three Bangladesh providers don't, and the type system reflects that truth instead of pretending otherwise.
 
 The webhook event itself is normalized:
 
@@ -111,19 +104,16 @@ interface WebhookEvent {
 }
 ```
 
-## Build, ship, test
+## Build and ship
 
-- **Monorepo** — pnpm + Turbo. `packages/node/` is the only published package; `apps/test/` is a Cloudflare Workers Vitest harness.
-- **Bundle** — tsup outputs CJS + ESM + `.d.ts`. Stripe and Paddle SDKs are the only non-trivial runtime deps; the eight HTTP providers add zero footprint beyond their own type definitions.
-- **Release** — Changesets. Every PR adds a changeset markdown file; `changesets publish` bumps version and ships to npm.
-- **Edge testing** — `@cloudflare/vitest-pool-workers` runs the test suite inside the actual Workers runtime. The library is verified to work where it'll be deployed.
+pnpm + Turbo monorepo. `packages/node/` is the published package, `apps/test/` is a Cloudflare Workers Vitest harness. Bundling is tsup with CJS + ESM + `.d.ts` output. Stripe and Paddle are the only non-trivial runtime dependencies; the eight HTTP providers add nothing beyond their own type definitions. Releases go through Changesets — every PR adds a markdown changeset file, `changesets publish` bumps the version and ships to npm. Tests run inside the actual Workers runtime through `@cloudflare/vitest-pool-workers`, so we're verifying the library where it'll actually be deployed.
 
-## Tradeoffs
+## The tradeoffs, honestly
 
 | Choice | Why |
 |---|---|
-| **Discriminated unions, not inheritance** | Each provider is fully independent. Adding one means adding a config type, a params type, a class, and a switch case — no base-class refactor. |
-| **Conditional type for params** | The factory returns a typed instance whose `createCheckoutSession` signature is provider-specific. The IDE does the work the docs would otherwise have to. |
-| **`overrides` escape hatch on Stripe** | The unified params cover 90% of usage. The other 10% gets `overrides?: Partial<StripeSDK.Checkout.SessionCreateParams>` — no need to ever drop down to the native SDK. |
-| **`crypto.subtle` over `node:crypto`** | Works in Workers, Deno, browsers, and Node 18+ unchanged. The cost is async signature ops, which were already async anyway. |
-| **Optional webhook method** | Provider parity is a *coverage* goal, not an API design goal. Pretending Bkash has signed webhooks is worse than admitting it doesn't. |
+| Discriminated unions, not inheritance | Each provider is independent. Adding one means a new config type, params type, class, and switch case — no base-class refactor that ripples through everything. |
+| Conditional type for params | The factory returns a typed instance whose `createCheckoutSession` signature is provider-specific. The IDE does the work the docs would otherwise have to. |
+| `overrides` escape hatch on Stripe | The unified params cover 90% of use cases. The other 10% gets `overrides?: Partial<StripeSDK.Checkout.SessionCreateParams>` so you never have to drop down to the native SDK. |
+| `crypto.subtle` over `node:crypto` | Works in Workers, Deno, browsers, and Node 18+ without a branch. The cost is async signature ops, which were already async anyway. |
+| Optional webhook method | Provider parity is a *coverage* goal, not an API design goal. Pretending Bkash has signed webhooks is worse than admitting it doesn't. |

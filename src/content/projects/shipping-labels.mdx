@@ -10,75 +10,25 @@ coverBg: "#f9f9f9"
 type: client
 ---
 
-## Architecture
+## The setup
 
-The platform is a single Cloudflare Worker serving a **Next.js 16 App Router** front end with **Payload CMS 3** as the backend. The whole thing compiles to Workers via **`@opennextjs/cloudflare`**, runs against **D1** for relational data, **R2** for label PDFs, and **Analytics Engine** for event telemetry. There's no Postgres, no Redis, no S3, no separate API service.
+The platform is a single Cloudflare Worker serving a Next.js 16 App Router front end with Payload CMS 3 as the backend. The whole bundle compiles to Workers through `@opennextjs/cloudflare`, runs against D1 for relational data, R2 for label PDFs, and Analytics Engine for event telemetry. No Postgres, no Redis, no S3, no separate API service. The thing I keep coming back to is how *little* infrastructure is involved — the data plane and the runtime are the same vendor, and that means the latency between "Server Action fires" and "row lands" is mostly compiler-bound, not network-bound.
 
-```
-┌──────────────────────────────────────────────────────────┐
-│ Cloudflare Worker (OpenNext bundle)                       │
-│                                                           │
-│  Next.js 16 (App Router, Server Actions)                  │
-│      ↓                                                    │
-│  Payload CMS 3  ←  hooks fire on every mutation           │
-│      ↓                                                    │
-│  D1 (SQLite)                                              │
-│                                                           │
-│  Media uploads  →  R2                                     │
-│  Events         →  Analytics Engine                       │
-│  Images         →  Cloudflare Images binding              │
-└──────────────────────────────────────────────────────────┘
-```
+## The piece that took the longest to get right
 
-## The financial model
+Every label sale has to keep three things in lockstep: the **Labels** row (what the buyer asked for), the **Transactions** ledger (immutable record of money moving), and the user's **metric fields** — `currentBalance`, `totalSpend`, `totalLabels`, `referralBalance`, and a few more. The first version had that logic in the Server Action. It worked, until I added an admin Server Action that could also create a label, and immediately the rules diverged. Same bug, twice, in two places.
 
-Three things have to stay consistent on every label sale:
+The fix was moving the rules into Payload collection hooks and letting the Server Actions go back to being thin entry points whose only job is to write a row. The hook fires no matter who created the label — admin UI, customer flow, future API integration — and the rules can't drift because there's only one copy of them.
 
-1. The **Labels** record (what the buyer asked for)
-2. The **Transactions** ledger (immutable record of money moving)
-3. The user's **metric fields** (`currentBalance`, `totalSpend`, `totalLabels`, `referralBalance`, `totalReferralEarnings`, ...)
+There are three of these hooks worth describing.
 
-The mistake would be to write that consistency logic in a Server Action. Server Actions are entry points, not invariants — a second entry point would duplicate the rules and the rules would drift. Instead the rules live in **Payload collection hooks**, and Server Actions just *create the records*.
+**On create, charge the buyer.** When a `Labels` row is inserted, an `afterChange` hook looks up the price from the **Weights** collection by shipping type and weight range, multiplies by recipient count, writes a `Transactions` row of type `charge`, deltas the user's counters through a shared utility, and logs one Analytics Engine event per recipient plus one for the transaction. A single Server Action call — "create this label" — fans out into a label row, a transaction row, three counter deltas, and N+1 analytics events. The Server Action knows none of this and shouldn't.
 
-### Hook 1 — label creation cascades a charge
+**On `awaiting`, credit the referrer.** Commission isn't paid on purchase, it's paid on the first delivery handoff. When a label transitions to `status: "awaiting"`, a hook looks up an active referral row where the buyer is the `referredUser`, computes the commission as a percent of the charge, writes a `Transactions` row for the *referrer* (not the buyer), bumps the referral's `totalEarnings`, and updates the referrer's `referralBalance` and `totalReferralEarnings`. Buying-then-cancelling-before-pickup therefore never triggers a payout in the first place — that's the business rule, encoded in one place.
 
-`src/collections/Labels/hooks/createTransaction.ts` (afterChange on `create`):
+**On `refunded`, reverse everything.** The refund hook finds the original `charge` transaction, bails out early if a refund already exists (so the hook is idempotent), writes a `refund` transaction, and — if a commission was paid — marks the referral transaction `cancelled` and decrements the same three referrer fields the credit hook incremented. The forward path and the reverse path are mirror images, and both go through the same delta utility. That symmetry is what makes the ledger trustworthy.
 
-1. Look up the price from the **Weights** collection by `shippingType + weight range`.
-2. Compute `totalAmount = price × recipientCount`.
-3. Write a `Transactions` row, `type: "charge"`.
-4. Call `updateUserMetrics(payload, userId, { totalLabels: +1, totalSpend: +totalAmount, currentBalance: -totalAmount })`.
-5. Log one Analytics Engine event per recipient (shipping type, state, cost) and one for the transaction.
-
-A single Server Action call — "create this label" — produces a label row, a transaction row, three counter deltas, and N+1 analytics events. The Server Action knows none of this.
-
-### Hook 2 — referral commissions on `awaiting`
-
-`src/collections/Labels/hooks/creditReferralOnAwaiting.ts` fires when a label transitions to `status: "awaiting"`:
-
-1. Look up an active (non-expired) **Referrals** row where the label's owner is the `referredUser`.
-2. Compute `commission = chargeAmount × commissionPercent / 100`.
-3. Write a `Transactions` row for the *referrer* (not the buyer), `type: "referral"`.
-4. Increment `Referral.totalEarnings`.
-5. Bump the referrer's `referralBalance` and `totalReferralEarnings`.
-
-Commission is paid on the *first delivery handoff*, not on purchase — so cancellations before pickup never trigger a payout in the first place. That's a business rule, encoded once, in one hook.
-
-### Hook 3 — refunds reverse everything
-
-`src/collections/Labels/hooks/refundOnStatusChange.ts` fires when a label transitions to `status: "refunded"`:
-
-1. Find the original `type: "charge"` transaction.
-2. Bail out if a refund already exists for this label (idempotency).
-3. Write a `type: "refund"` transaction for the original amount.
-4. If a referral commission was paid on this label:
-   - Mark the referral transaction `status: "cancelled"`.
-   - Decrement the referrer's `referralBalance` and `totalReferralEarnings`.
-   - Decrement `Referral.totalEarnings`.
-
-The forward path and the reverse path are *mirror images of each other*, and both go through the same delta utility. That symmetry is what makes the ledger trustworthy.
-
-## Atomic counter updates
+## The counter utility
 
 ```typescript
 export async function updateUserMetrics(
@@ -90,29 +40,25 @@ export async function updateUserMetrics(
     const data: Record<string, number> = {};
     for (const field of fields) {
         const current = (user[field] as number) ?? 0;
-        data[field] = Math.max(0, current + deltas[field]);   // floor at zero
+        data[field] = Math.max(0, current + deltas[field]);
     }
     await payload.update({ collection: "users", id: userId, data });
 }
 ```
 
-Three properties matter:
+Three properties matter and they all come from staring at past production incidents. Callers pass deltas (`+1`, `-50`) rather than absolute values, so two callers can't independently compute a new total and race each other. The `Math.max(0, ...)` floor means refunds and reversals can't drive a balance negative even if the bookkeeping is wrong somewhere else — the transactions table is canon, counters are a fast read-side projection that should never embarrass you. And the whole thing lands in one `payload.update`, so a partial failure can't leave half the counters touched.
 
-- **Delta-shaped API** — callers pass `+1` or `-50`, never absolute values. No two callers compute the new total independently and race each other.
-- **Floor at zero** — refunds and reversals can't drive a balance negative even when the bookkeeping is wrong elsewhere. The ledger is the source of truth; counters are a fast read-side projection.
-- **Single `payload.update` write** — all deltas land in one SQL UPDATE so a partial failure can't leave half the counters touched.
-
-## Payments — three gateways, one ledger
+## Payments
 
 | Gateway | Path | Verification |
 |---|---|---|
-| **Stripe** | `POST /api/transactions/stripe/callback` on `checkout.session.completed` | HMAC signature against webhook secret |
-| **Coinbase Commerce** | `POST /api/transactions/coinbase/callback` on `charge:confirmed` | HMAC-SHA256 against shared secret |
-| **Manual** (Venmo, Cash App, Zelle) | Admin-initiated Server Action | Manual review |
+| Stripe | `POST /api/transactions/stripe/callback` on `checkout.session.completed` | HMAC signature against webhook secret |
+| Coinbase Commerce | `POST /api/transactions/coinbase/callback` on `charge:confirmed` | HMAC-SHA256 against shared secret |
+| Manual (Venmo, Cash App, Zelle) | Admin-initiated Server Action | Manual review |
 
-All three roads end the same way: a `Transactions` row of `type: "topup"`, status `confirmed`. The Transactions `afterChange` hook bumps `currentBalance` via the same `updateUserMetrics` utility used by labels. Adding a fourth gateway means writing one webhook handler and inserting one row — the rest cascades.
+All three roads end the same way: a `Transactions` row of `type: "topup"`, status `confirmed`. The `afterChange` hook on `Transactions` bumps `currentBalance` through the same `updateUserMetrics` utility the labels hooks use. Adding a fourth gateway is one webhook handler and one row insert — the rest cascades.
 
-## Collections
+## The collections
 
 | Collection | Role |
 |---|---|
@@ -128,25 +74,14 @@ All three roads end the same way: a `Transactions` row of `type: "topup"`, statu
 | `Weights` | Pricing matrix — `(shippingType, weightRange) → price` |
 | `Media` | R2-backed file uploads |
 
-## Storage and delivery
+## Files and delivery
 
-Label PDFs uploaded into the `Labels.pdf` field are stored in **R2** via `@payloadcms/storage-r2`. Delivery goes through the **Cloudflare Images** binding so PDFs (and the marketing site's images) are cached at the edge and served with image-format negotiation where appropriate. There's no separate CDN to configure — the data plane *is* the CDN.
+Label PDFs uploaded into the `Labels.pdf` field are stored in R2 through `@payloadcms/storage-r2`, and delivery goes through the Cloudflare Images binding so PDFs and marketing-site images are cached at the edge with format negotiation where it makes sense. There's no separate CDN to configure because the data plane *is* the CDN.
 
 ## Frontend
 
-Three route groups under `src/app/(frontend)/`:
+The app lives in three route groups under `src/app/(frontend)/`: a landing group (`/`, `/signin`, `/signup`), a dashboard group with the obvious pages (overview, labels, addresses, packages, transactions, referrals, tickets, settings), and Payload's auto-generated `/admin`. Notably there's no `middleware.ts`. Every Server Action starts with `const { user } = await checkAuthorization(payload)`, which calls `payload.auth({ headers })` and redirects to `/signin` on miss. Putting the auth check at the action boundary instead of in middleware means it runs in the same context as the mutation, with the same Payload instance, with no cookie-passing dance. Server Actions return `{ success?, error?, message? }` envelopes and call `revalidatePath` to invalidate the Next.js cache on success.
 
-- `(landingpage)` — `/`, `/signin`, `/signup`
-- `(dashboard)` — `/overview`, `/labels`, `/addresses`, `/packages`, `/transactions`, `/referrals`, `/tickets`, `/settings`
-- `(payload)` — `/admin` (Payload's auto-generated admin UI)
+## What I'd want the next person to know
 
-No `middleware.ts`. Every Server Action starts with `const { user } = await checkAuthorization(payload)`, which calls `payload.auth({ headers })` and redirects to `/signin` on miss. Putting the check at the action boundary (not in middleware) means it runs in the same context as the mutation, with the same Payload instance, with no cookie-passing dance.
-
-Server Actions return `{ success?: true, error?: string, message?: string }` envelopes and call `revalidatePath` to invalidate Next.js cache on success.
-
-## Architectural decisions worth calling out
-
-- **Hooks own business rules, Server Actions own entry points.** If a rule lives in two Server Actions, it'll drift. A `Labels.afterChange` hook fires no matter who creates the label — admin panel, customer Server Action, future API integration.
-- **Ledger first, counters second.** Counters are a denormalized read-side projection. The transactions table is canon. Any counter can be rebuilt from a `SUM` over transactions.
-- **Edge-native or not at all.** D1, R2, Analytics Engine, Email Workers, Cloudflare Images — every binding is a Cloudflare primitive. No external services means no extra IAM, no extra VPC, no extra latency.
-- **Atomic deltas with a zero floor.** Most "race condition in our balances" stories end with a negative balance in production. `Math.max(0, current + delta)` is a cheap safety net underneath the real fix (the ledger).
+Hooks own business rules, Server Actions own entry points — and the difference matters more than it sounds like it should. The ledger is canon and the counters are a projection of it; if a counter ever looks wrong, the right answer is to rebuild it from a `SUM` over transactions, not to write a script that patches it. The whole stack is edge-native by choice, not by accident — every binding is a Cloudflare primitive, so there's no extra IAM, no extra VPC, no extra latency. And the zero-floor on counter deltas is cheap insurance: most "race condition in our balances" stories end with a negative balance in production, and `Math.max(0, current + delta)` is a small net underneath the real fix.

@@ -10,59 +10,46 @@ coverBg: "#0e1121"
 type: client
 ---
 
-## Architecture
+## The shape
 
-WorkTimeTracker is a single Cloudflare Worker serving SSR React (TanStack Start) with the data plane spread across **D1** (relational ledger), **Durable Objects** (realtime state), **Queues** (async work), and **Email Workers** (delivery). Every route lives under a dynamic `$org` segment so the URL itself encodes tenancy.
+WorkTimeTracker is a single Cloudflare Worker serving SSR React (TanStack Start), with the data plane spread across D1 for the relational ledger, Durable Objects for realtime state, Queues for async work, and Email Workers for delivery. Every route lives under a dynamic `$org` segment so the URL itself encodes tenancy — there isn't a "current org" stuffed in a cookie or computed at the edge; it's in the path, and that makes a lot of multi-tenant questions answer themselves.
 
-### Realtime layer — why two Durable Objects
+## The realtime layer is two Durable Objects, not one
 
-The hard problem in a time tracker isn't storing entries; it's making a running timer feel real across devices. A user can start a timer on their laptop, pause it on their phone in a meeting, and resume it back at the desk — and the team's dashboard should reflect every transition immediately.
+The hard problem in a time tracker isn't storing entries — that's just rows. The hard problem is making a running timer *feel* real across devices. A user starts a timer on their laptop, pauses it on their phone in a meeting, resumes it back at the desk, and the team's dashboard should reflect every transition immediately. Get that wrong and people stop trusting the tool, which means they stop using it, which means they stop paying for it.
 
-There are two DOs because the read/write shapes are different:
+I tried doing it with one DO per user that also fanned out to teammates, and it got muddled fast. The read shape (one user, many devices) and the write-fanout shape (one org, many viewers) are different problems, and stuffing them into the same object meant the per-user write path was paying the per-org broadcast cost on every tick. So there are two DOs.
 
-- **`UserTimerDO`** — one per user, owns `RunningTimerState` (`isRunning`, `startedAtMs`, `pausedAtMs`, `accumulatedMs`, current task/project/tags). WebSocket-attached; every device the user opens attaches to the same DO and receives broadcasts on every state change. Conflict detection rejects "start a new timer" from device B while device A already has one running.
-- **`OrgPresenceDO`** — one per organization, holds a `Map<userId, OrgPresenceEntry>` of who's tracking right now and what they're working on. Subscribers (team viewers on the `/activity` page) attach via WebSocket and receive a snapshot on connect, then incremental `upsert`/`remove` deltas.
+**`UserTimerDO`** is one per user, and it owns the timer state — `isRunning`, `startedAtMs`, `pausedAtMs`, `accumulatedMs`, current task, project, tags. WebSocket-attached; every device the user opens attaches to the same DO and gets broadcasts on every state change. Conflict detection rejects "start a new timer" from device B while device A already has one running, which sounds obvious until you realize it's the difference between merging two competing entries on the server vs. just refusing the second one.
 
-The flow: `UserTimerDO` mutates state → calls `OrgPresenceDO.fetch("/upsert")` → presence DO broadcasts to all subscribed teammates. Write-heavy state stays in one DO; read-heavy fanout stays in another.
+**`OrgPresenceDO`** is one per organization, holds a `Map<userId, OrgPresenceEntry>` of who's tracking right now and what they're working on. Subscribers — anyone viewing the `/activity` page — attach via WebSocket, receive a snapshot on connect, and then incremental `upsert` or `remove` deltas. When `UserTimerDO` mutates, it calls `OrgPresenceDO.fetch("/upsert")`, which broadcasts to teammates. Write-heavy state lives in one place, read-heavy fanout in another, and neither is paying for the other's work.
 
-### Persistence — D1 + Drizzle
+## D1 + Drizzle for everything long-lived
 
-Long-term data lives in **D1** through Drizzle. The schema is organized around the org boundary:
+Long-term data lives in D1 through Drizzle. The schema is organized around the org boundary, and roughly groups into six areas: identity (`user`, `account`, `session`, `passkey`, `twoFactor`, `apikey` — better-auth's tables), tenancy (`organization`, `member`, `invitation`), tracking (`timeEntry`, `timeEntryTag`, `runningTimer`, `tag`, `project`, `projectMember`, `client`), billing (`invoice`, `invoiceLineItem`, `timesheetPeriod`), activity (`activityEvent` for the audit log, `notification`, `sentEmail`), and integrations (`orgSlackConnection`, `webhookEndpoint`, `orgAirwallexConfig`, `organizationSettings`, `userPreference`).
 
-- **Identity** — `user`, `account`, `session`, `passkey`, `twoFactor`, `apikey` (driven by better-auth)
-- **Tenancy** — `organization`, `member`, `invitation`
-- **Tracking** — `timeEntry`, `timeEntryTag`, `runningTimer`, `tag`, `project`, `projectMember`, `client`
-- **Billing** — `invoice`, `invoiceLineItem`, `timesheetPeriod`
-- **Activity** — `activityEvent` (audit log), `notification`, `sentEmail`
-- **Integrations** — `orgSlackConnection`, `webhookEndpoint`, `orgAirwallexConfig`, `organizationSettings`, `userPreference`
+When a timer stops, the DO calls `commitTimerEntry()`, which inserts the `timeEntry`, links tags through `timeEntryTag`, and records an `activityEvent` in one transaction. The DO keeps the running cache; D1 is authoritative for committed history. Counters on the live timer are a fast read; the audit trail is the source of truth.
 
-When a timer stops, the DO calls `commitTimerEntry()`, which inserts the `timeEntry`, links tags via `timeEntryTag`, and records an `activityEvent` in one transaction. The DO keeps the running cache; D1 is authoritative for committed history.
+## Async work — Queues and Crons
 
-### Async work — Queues and Crons
+Two queues handle work that shouldn't block a request. `worktimetracker-emails` runs better-auth flows, password resets, notifications, and digests through React Email templates shipped via Cloudflare Email Workers — batched up to 10 messages with 3 retries before the DLQ catches anything permanently broken. `worktimetracker-lifecycle` handles account and org deletions, which sound cheap but include Polar subscription revocation, which is a third-party call that can be slow or transiently fail. Queueing it means the user gets a "deletion requested" response immediately and the actual cascading delete runs with exponential backoff in the background.
 
-Two Queues handle work that shouldn't block a request:
-
-- **`worktimetracker-emails`** — better-auth, password resets, notifications, and digests render React Email templates and ship through Cloudflare Email Workers. Batched up to 10 messages with 3 retries before the DLQ catches anything permanently broken.
-- **`worktimetracker-lifecycle`** — account and org deletions. Polar subscription revocation is a third-party call that can be slow or transiently fail; queueing it means the user gets a "deletion requested" response immediately and the actual cascading delete runs with exponential backoff.
-
-Three cron triggers run the recurring work:
+Three crons handle the recurring work:
 
 | Cron | Job |
 |---|---|
 | `*/30 * * * *` | Scan for timers running over 12 hours (probably forgotten) and notify the owner |
 | `0 9 * * *` | Email orgs about overdue invoices |
-| `0 13 * * 1` | Weekly digest (hours tracked, billable breakdown, revenue) |
+| `0 13 * * 1` | Weekly digest — hours tracked, billable breakdown, revenue |
 
-### Auth and billing
+## Auth and billing
 
-**better-auth** is the identity layer — passkeys (WebAuthn), TOTP 2FA, API keys, Google SSO when configured. Sessions carry an `activeOrganizationId`, and `orgScopedMiddleware` re-validates membership on every server fn.
+Identity is better-auth — passkeys (WebAuthn), TOTP 2FA, API keys, Google SSO when configured. Sessions carry an `activeOrganizationId`, and an `orgScopedMiddleware` re-validates membership on every server fn. Polar is the payment processor, with plan tiers (free / pro / team / business) living in `billing-config.ts`. Features like the Slack integration get gated by throwing `PlanFeatureError` server-side rather than hiding the UI client-side, so the plan check happens where the data is, not in client guards that an honest mistake could bypass. Polar webhooks invalidate a KV-cached plan record on subscription changes.
 
-**Polar** is the payment processor. Plan tiers (free / pro / team / business) live in `billing-config.ts`. Features like Slack integration are gated through `PlanFeatureError` thrown server-side, so plan checks happen where the data is, not in client guards. Polar webhooks invalidate a KV-cached plan record on subscription changes.
+## Slack
 
-### Slack integration
+Two install paths: a proper OAuth flow (`getSlackInstallUrl()` → callback at `/api/slack/oauth` → `upsertSlackConnection()`) for orgs that want to do it the right way, and a manual bot-token paste for the ones that don't. `postSlackMessage()` gets called from the invoice-paid, time-entry-committed, and digest hooks. The whole integration is plan-gated to team and business.
 
-Two paths: an OAuth flow (`getSlackInstallUrl()` → callback at `/api/slack/oauth` → `upsertSlackConnection()`) and a manual bot-token paste for orgs that don't want OAuth. `postSlackMessage()` is called from invoice-paid, time-entry-committed, and digest hooks. Plan-gated to team and business.
+## Why this shape fits
 
-## Why the stack works for this problem
-
-The shape of the workload — bursty per-user writes, fanout reads to a small team, periodic email, and rare expensive deletions — maps cleanly onto Workers primitives. Durable Objects replace a Redis-backed WebSocket server with no infrastructure to run; D1 replaces a hosted Postgres at this scale; Queues + Crons replace a job runner. The result is a SaaS where the only thing to scale is the Polar bill.
+The workload is bursty per-user writes, fanout reads to a small team, periodic email, and rare expensive deletions — and that maps cleanly onto Workers primitives. Durable Objects replace what would otherwise be a Redis-backed WebSocket server with no infrastructure to run; D1 replaces a hosted Postgres at this scale; Queues plus Crons replace a separate job runner. The result is a SaaS where the only thing that scales meaningfully is the Polar bill.
