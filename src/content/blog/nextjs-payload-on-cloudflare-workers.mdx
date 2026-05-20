@@ -5,7 +5,7 @@ date: 2026-05-20
 tags: [Next.js 16, Payload CMS 3, Cloudflare Workers, OpenNext, D1, R2]
 ---
 
-I've shipped two production apps on this stack now: a [discounted-USPS-label marketplace](/projects/shipping-labels) and a [Spotify-shaped music streaming app](/projects/tonetouchmusic). Both run as a single Cloudflare Worker. Same bundle, same deploy, same dashboard. After the second one I figured the pattern was real enough to write down.
+I've shipped two production apps on this stack now: a [discounted-USPS-label marketplace](/projects/shipping-labels) and a [Work Time Tracker app](/projects/worktimetracker). Both run as a single Cloudflare Worker. Same bundle, same deploy, same dashboard. After the second one I figured the pattern was real enough to write down.
 
 The first time I tried this I expected something to break. Some Node API that wasn't polyfilled, some Payload internal that assumed Postgres, some Server Action that hated the Workers runtime. None of it happened. The thing that surprised me wasn't that it worked, it was how *boring* it was to set up once OpenNext had done the heavy lifting.
 
