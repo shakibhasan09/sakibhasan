@@ -1,0 +1,107 @@
+---
+title: Running Next.js 16 + Payload 3 on a single Cloudflare Worker
+description: One Worker, one bundle, no Postgres, no Redis, no S3. Notes from two production apps on what actually holds up.
+date: 2026-05-20
+tags: [Next.js 16, Payload CMS 3, Cloudflare Workers, OpenNext, D1, R2]
+---
+
+I've shipped two production apps on this stack now: a [discounted-USPS-label marketplace](/projects/shipping-labels) and a [Spotify-shaped music streaming app](/projects/tonetouchmusic). Both run as a single Cloudflare Worker. Same bundle, same deploy, same dashboard. After the second one I figured the pattern was real enough to write down.
+
+The first time I tried this I expected something to break. Some Node API that wasn't polyfilled, some Payload internal that assumed Postgres, some Server Action that hated the Workers runtime. None of it happened. The thing that surprised me wasn't that it worked, it was how *boring* it was to set up once OpenNext had done the heavy lifting.
+
+So here's what the stack actually looks like, why I'd reach for it again, and the stuff I had to learn the slow way.
+
+## What "one Worker" means in practice
+
+Everything compiles to one Workers bundle through [`@opennextjs/cloudflare`](https://opennext.js.org/cloudflare). App Router pages, Server Actions, the Payload admin UI at `/admin`, Payload's local API, image uploads, webhook callbacks, cron handlers. One `wrangler deploy`. One log stream. One thing to roll back.
+
+The bindings I lean on:
+
+| Binding | What it's for |
+|---|---|
+| **D1** | Payload's relational store. Collections, relations, auth, sessions. |
+| **R2** | Payload media uploads via `@payloadcms/storage-r2`. Label PDFs in one app, song audio and cover art in the other. |
+| **Cloudflare Images** | Edge delivery and on-the-fly transforms for anything in R2 that's public-facing. |
+| **Analytics Engine** | Per-event telemetry. Transactions, AI calls, playback events. |
+| **Queues** | Async fan-out. Ingest pipelines, webhook retries. |
+| **Durable Objects** | Stateful stuff that outlives a request. Realtime presence, agent sessions. ([WorkTimeTracker](/projects/worktimetracker) leans on these hard.) |
+
+What's not in that list is the headline. No Postgres. No Redis. No S3. No separate API service in front of Payload. The Next host, the CMS, the database, the object store, the CDN, the queue, the analytics layer, they're all the same deploy.
+
+## Payload 3 on D1, mostly without drama
+
+Payload 3 ships a SQLite adapter that talks to D1 over the Workers binding. You point it at the `DB` binding in `payload.config.ts` and the rest of Payload runs unchanged. Collections, hooks, the admin UI, REST, auth, all of it.
+
+The parts I appreciated more than I expected:
+
+There's no connection pool to babysit. D1 is a binding, not a TCP target, so there's no pool to exhaust during a burst and nothing to warm up between requests. The mental tax that comes with "did I leak a connection somewhere" just isn't a thing.
+
+Migrations are plain SQL files. Payload generates them, `wrangler d1 migrations apply` runs them, and the same file runs against the local Miniflare D1 and against production. The first time I ran prod migrations I was waiting for the second-shoe to drop and it never did.
+
+The real constraint, and you should take this seriously before committing, is that you're on SQLite. No window functions you might lean on in Postgres, no `jsonb` operators, no recursive CTEs. For both of my apps the data models fit fine. Twenty-one Payload collections in one, eleven in the other, all relational, none of them needing anything Postgres-only. But if your domain actively wants those features, D1 will hurt and that pain won't go away.
+
+## R2 + Cloudflare Images, not S3 + CloudFront
+
+`@payloadcms/storage-r2` makes every upload field write to R2 instead of disk. You hand it the bucket binding, list the collections it applies to, and uploads happen through the same Payload admin UI and the same local API as before. From Payload's perspective nothing changed.
+
+For delivery I run public files through the **Cloudflare Images binding** instead of signed R2 URLs. Images pulls from R2, transforms at the edge (format negotiation, resize, quality), and caches with sensible headers. Two things follow from this that are easy to miss until you're a few months in:
+
+The data plane *is* the CDN. There's no second hop, no separate invalidation API, no `aws cloudfront create-invalidation` ritual. When you change a file's key, the next request fetches the new one. That's the whole story.
+
+The bandwidth bill stops scaling with delivery. R2 has zero egress and Images bills on transforms, not on bytes shipped. For a media-heavy app this is the single largest cost difference vs. S3 plus a regional bucket. It's not the reason to pick the stack, but it stops feeling like a rounding error around the time you have a few hundred GB of audio in R2 and your monthly bill still has the same digits.
+
+## The one decision I'd argue about: hooks own rules, Server Actions own entry points
+
+This is the part I want anyone copying the stack to take seriously, because it's the one that took me a build and a half to internalize.
+
+Server Actions are a great frontend ergonomic. They are a bad place to put business invariants. The reason is that every Server Action is *an entry point*, and any invariant that lives in an entry point will get duplicated the moment a second entry point shows up. An admin clicking the same button in the Payload UI. A webhook callback creating the same record. A future REST integration. Two entry points means two copies of the rule, and the rules will drift. It doesn't matter how disciplined you are.
+
+So in both apps the rule lives in a **Payload `afterChange` hook on the collection**, and the Server Action just *creates the record*.
+
+A label sale in [the shipping app](/projects/shipping-labels) is one Server Action that does one thing: `payload.create({ collection: "labels", data })`. Done. The label's `afterChange` hook then cascades. It looks up the price from the `Weights` collection, writes a `Transactions` ledger row of `type: "charge"`, updates the user's counters (`currentBalance`, `totalSpend`, `totalLabels`) through a single delta utility, and emits Analytics Engine events. The Server Action knows none of this. A label created from the Payload admin panel produces exactly the same cascade. So would one from a future API client.
+
+The refund path is the same shape in reverse. A status transition to `"refunded"` fires a hook that writes the reverse `Transactions` row, reverses the counters, and unwinds any referral commission already paid. Forward and reverse are mirror images, both going through the same delta utility, and that symmetry is most of why I trust the ledger.
+
+The first version of this app had the cascade in the Server Action. It was fine until I added the Payload admin path and immediately noticed counters drifting. Lesson learned, hopefully once.
+
+## Auth at the action boundary, not in middleware
+
+There's no `middleware.ts` in either app. Authorization runs at the action boundary.
+
+Every Server Action and every Payload-protected route opens with the same line:
+
+```ts
+const { user } = await checkAuthorization(payload)
+```
+
+`checkAuthorization` calls `payload.auth({ headers })` and redirects to `/signin` on a miss. The check runs in the same Worker invocation as the mutation, with the same Payload instance, against the same D1 binding. No cookie-passing dance between a middleware Worker and a backend, no second `payload.init()` for the middleware context.
+
+Next.js middleware on Workers is fine for the things middleware is actually for, host-based routing, static rewrites, locale negotiation. The minute you reach for the database from middleware, do yourself a favor and move it to the action.
+
+## What the bill looks like
+
+Single Worker, single D1, single R2 bucket, Cloudflare Images, Analytics Engine. No managed Postgres line item. No S3 line item. No regional CDN line item. The CMS isn't a separate hosted product, the auth provider isn't a separate hosted product, email goes through Email Workers, webhooks dispatch from the same Worker.
+
+For both of these apps, single-digit-thousand DAU, low-tens of thousands of monthly transactions, hundreds of GB in R2, the monthly bill is mostly paid Workers and R2 storage. Everything else is small-double-digit dollars or free tier. The shape changes from "many vendors, one of them dominant" to "one vendor, roughly proportional to traffic." After shipping two of these I stopped budgeting for infra the way I used to.
+
+## What you give up
+
+Honest list. I've been bitten by each of these.
+
+**You're on SQLite.** Covered above. If your data model wants Postgres-only features, this stack isn't the move.
+
+**Some Node-shaped libraries don't work, or need replacements.** Most things work fine. `sharp` is the classic one to swap for Cloudflare Images. Anything that spawns a child process is out. The way I usually find out is the build succeeds and the runtime throws on first hit, so test the cold paths.
+
+**OpenNext is doing real work in the middle.** When a Next.js feature ships, OpenNext has to catch up. The lag has been short for me, App Router, Server Actions, Server Components, PPR all work, but it's a layer in the stack and worth being aware of.
+
+**Long per-request work has to leave the request path.** Workers have CPU limits per invocation. Anything heavier than "render a page and hit the DB" belongs in a Queue, a Workflow, or a Durable Object. Both apps use Queues for ingest and DOs for anything stateful, and the request path stays small as a result. That's actually the *good* outcome of the constraint, it forces the architecture you should have had anyway, but if you're coming from a "throw it in the request handler and add a worker pool later" background it'll feel limiting at first.
+
+## Would I pick it again
+
+Yeah. Twice now and I haven't found the case where I regretted it. The honest test for whether this stack is right for your project is: can your data model live on SQLite, are you okay with OpenNext as an intermediate layer, and are you willing to push heavy work into Queues and DOs instead of request handlers. If all three are yes, the operational simplicity is hard to beat.
+
+If you try it and hit something gnarly I haven't covered, send it my way, I'd like to know what I haven't run into yet.
+
+---
+
+If you want the full breakdowns of the two apps this post is drawn from, the architecture write-ups live at [Shipping Label Platform](/projects/shipping-labels) and [Tone Touch Music](/projects/tonetouchmusic).
