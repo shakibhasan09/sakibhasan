@@ -68,7 +68,7 @@ const lightGradient = extracted ?? fallback;
 const darkGradient = extracted ?? fallback;
 
 const imgClass = [
-    "max-w-full max-h-full object-contain rounded-md ring-1 ring-black/20 shadow-2xl",
+    "w-4/5 h-full object-contain rounded-md",
     hover && "transition duration-500 group-hover:scale-[1.02]",
 ];
 
@@ -81,8 +81,8 @@ const sizes =
 
 <div
     class:list={[
-        "cover-bg aspect-16/10 rounded-xl overflow-hidden ring-1 ring-border relative flex items-center justify-center p-[8%]",
-        hover && "transition group-hover:ring-foreground/40",
+        "cover-bg aspect-16/10 rounded-xl overflow-hidden relative flex items-center justify-center",
+        hover && "transition",
     ]}
     style={`--cover-bg-light: ${lightGradient.light}; --cover-bg-dark: ${darkGradient.dark};`}
 >

@@ -7,6 +7,10 @@
     "light": "linear-gradient(135deg, hsl(216 70% 90%) 0%, hsl(216 70% 78%) 50%, hsl(231 66% 62%) 100%)",
     "dark": "linear-gradient(135deg, hsl(216 91% 60%) 0%, hsl(216 91% 50%) 50%, hsl(231 78% 22%) 100%)"
   },
+  "tonetouchmusic": {
+    "light": "linear-gradient(135deg, hsl(26 70% 90%) 0%, hsl(26 70% 78%) 50%, hsl(40 66% 62%) 100%)",
+    "dark": "linear-gradient(135deg, hsl(26 90% 60%) 0%, hsl(26 90% 50%) 50%, hsl(40 76% 22%) 100%)"
+  },
   "unify-payment": {
     "light": "linear-gradient(135deg, hsl(147 42% 90%) 0%, hsl(147 42% 78%) 50%, hsl(162 40% 62%) 100%)",
     "dark": "linear-gradient(135deg, hsl(147 55% 60%) 0%, hsl(147 55% 50%) 50%, hsl(162 47% 22%) 100%)"

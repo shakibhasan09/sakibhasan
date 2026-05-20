@@ -1,0 +1,105 @@
+---
+title: Tone Touch Music
+description: AI-native music streaming app on Cloudflare with Workers AI, Vectorize, and Agents SDK.
+date: 2026-05-20
+tags: [Next.js 16, Payload CMS 3, Cloudflare Workers, D1, R2, Workers AI, Vectorize, Agents SDK]
+url: https://tonetouchmusic.sakibhasan.dev
+cover: ../../assets/projects/light/tonetouchmusic.png
+coverDark: ../../assets/projects/dark/tonetouchmusic.png
+coverBg: "#f5f5f7"
+type: client
+---
+
+## Architecture
+
+Tone Touch Music is a Spotify-style streaming app built as a single Cloudflare Worker. **Next.js 16 App Router** renders the frontend (browse, charts, radio, library, communities, made-for-you), **Payload CMS 3** owns the catalog and admin, and the whole bundle compiles to Workers via **`@opennextjs/cloudflare`**. The data plane is **D1** for the relational catalog, **R2** for audio and artwork, **Vectorize** for taste and lyric embeddings, **Workers AI** for in-runtime inference, and a long-context LLM routed through **AI Gateway** for generation that exceeds the in-runtime context window. Queues drive the ingest pipeline, Durable Objects host the stateful agents (DJ, PlaylistBuilder, Discovery), and there's no external Postgres, Redis, or separate inference service to operate.
+
+## Catalog model
+
+Twenty-one Payload collections, organized around the listening loop:
+
+| Group | Collections |
+|---|---|
+| **Identity** | `Users`, `Plans`, `Subscriptions` |
+| **Catalog** | `Artists`, `Albums`, `Songs`, `Genres`, `Lyrics`, `Media` |
+| **Library** | `Playlists`, `LibraryItems`, `PlayHistory`, `MadeForYouMixes` |
+| **Browse** | `BrowseCategories`, `Charts`, `RadioStations` |
+| **Social** | `Communities`, `Posts`, `Comments`, `Follows` |
+| **AI** | `AIJobs` |
+
+The `AIJobs` collection is the spine of every generative feature — every Workers AI call, every external LLM completion, every FLUX cover render writes a row with `type`, `provider`, `model`, `gateway`, `input`, `output`, `promptTokens`, `cachedTokens`, `cost`, and `latencyMs`. One ledger for usage, billing attribution, and "why is this bio wrong" debugging.
+
+## AI architecture
+
+The hard part of an AI-native streaming app isn't picking a model — it's deciding *where* each feature runs. Workers AI is cheap, in-region, and bound directly to the worker; an external long-context LLM is higher-quality but pay-per-token. The split is driven by context length and quality, not preference.
+
+### On Workers AI (in-runtime, no egress)
+
+| Feature | Model |
+|---|---|
+| Semantic / lyric / multilingual search | `@cf/baai/bge-m3` (1024-d) + Vectorize |
+| Voice search | `@cf/openai/whisper-large-v3-turbo` |
+| Made-for-You, "Because you listened to X", Smart Radio, mood mixes | Vectorize similarity + `@cf/baai/bge-reranker-base` |
+| Community moderation | `@cf/meta/llama-guard-3-8b` |
+| Image alt-text | `@cf/llava-hf/llava-1.5-7b-hf` |
+| Live-lyric translation | `@cf/meta/m2m100-1.2b` |
+| Auto playlist cover art | `@cf/black-forest-labs/flux-1-schnell` |
+| AI DJ voice (TTS) | `@cf/deepgram/aura-2-en` |
+
+### On an external LLM (via AI Gateway)
+
+Workers AI's best Llama tops out at a 24k-context window — too tight for "summarize this user's last 200 plays into a friend digest" or "write a track-by-track album review with the lyrics inline." These get routed through `gateway.ai.cloudflare.com/v1/<acct>/tonetouch/...` to a long-context model:
+
+- Artist bios, album reviews, track-by-track notes
+- "About this track" in the now-playing sidebar
+- AI DJ scripts (commentary text, before TTS)
+- Thread summaries, weekly friend listening recap
+- "Why this is rising" blurbs on the charts page
+- AI Playlist Builder prompt parsing
+
+The Gateway gives caching, rate-limit handling, and per-feature analytics for free. **Provider-side prompt caching** is the lever that makes the economics work — artist and album context refresh nightly, so the same 30k-token block is reused across every "About this track" and "Album review" request for that artist until the next cron tick. Cache-hit ratio sits high enough that external LLM cost per request lands below a typical Workers AI LLM call.
+
+### Vectorize indexes
+
+Five 1024-d indexes (256-d for fingerprints): tracks, lyrics, user taste, playlists, and audio fingerprints. The centerpiece is the per-user taste index — a running vector updated as a moving average over listening history. Made-for-You and "Because you listened to X" both reduce to a single similarity query against the tracks index with the user's taste vector and a small metadata filter (region, explicit-allowed, not-recently-played). One vector primitive, two product surfaces.
+
+### Stateful agents — Durable Objects via Agents SDK
+
+Three DO-backed agents own anything stateful or long-running:
+
+- **`DJAgent`** — per-user. Holds the queue, the upcoming-track context, and the running DJ persona. WebSocket-attached so the player UI gets streaming token updates as the LLM writes the next commentary block; the script is then handed to Aura-2 for TTS and pre-buffered before the current track ends.
+- **`PlaylistAgent`** — per-build session. Takes a natural-language prompt ("60 min of '90s trip-hop into ambient downtempo"), uses the LLM to parse the intent into seeds + constraints, walks `VEC_TRACKS` with the reranker for ordering, and streams the playlist back as it's built.
+- **`DiscoveryAgent`** — per-user, scheduled. Runs nightly via the Agents SDK's `schedule()` to refresh the user's daily mix and "new releases for you" row. SQL state on the DO holds last-seen track IDs so the same drop doesn't surface two days running.
+
+### Ingest pipeline — Queues + Workflows
+
+A track upload kicks off a **Workflow** (`TRACK_PIPELINE`) that stages the audio in R2, runs Chromaprint in a Container for fingerprint-based dedupe, extracts audio features (BPM, key, genre, mood, energy) with Essentia.js in WASM, embeds lyrics and a synthesized song description into Vectorize, generates LLaVA alt-text for the cover, enqueues a long-context LLM job for the "About this track" copy, and finally marks the song `published`. Every step writes an `AIJobs` row so the admin can see exactly where in the pipeline a track is stuck, and embeddings are batched through the **`INGEST_Q`** queue (max batch 25) to stay under Workers AI's per-minute rate limits — never called from a per-request path.
+
+## Rate-limit and cost discipline
+
+Three rules the app refuses to break:
+
+1. **No Workers AI calls in the request path during ingest.** Embedding 1500 tracks at once will trip the 1500–3000 rpm cap. Everything ingest-side goes through `INGEST_Q`.
+2. **Cover art is content-addressed in R2.** A FLUX render is keyed by `sha256(playlistTitle + sortedTrackIds)` and stored in R2. Edits to a playlist that don't change membership reuse the existing image — playlist cover regen is the most expensive per-user AI operation, and most "edits" don't actually need a new image.
+3. **Per-user cron fans out through a Workflow, not a Worker.** Daily Discovery for a million users can't be one cron handler. The cron tick enqueues users in chunks; a Workflow consumer paces the per-user `DiscoveryAgent` calls inside Workers AI's quota.
+
+## Frontend surfaces
+
+Route groups under `src/app/(frontend)/`:
+
+- **Discovery** — `/`, `/browse`, `/charts`, `/recently-added`, `/made-for-you`, `/search`
+- **Catalog** — `/artists/[id]`, `/albums/[id]`, `/songs/[id]`, `/playlists/[id]`, `/radio/[id]`
+- **Personal** — `/library`, `/account`
+- **Social** — `/communities`
+- **Commerce** — `/pricing`, `/cart`
+- **Auth** — `/signin`, `/signup`, `/forgot-password`
+
+The player (`src/components/player/now-playing-bar.tsx`) is the densest AI surface — synced lyrics with on-the-fly translation, the "About this track" sidebar, DJ commentary intros between tracks, and a `frequency-waves.tsx` visualizer wired to the audio element. Everything else hangs off the existing Spotify-shaped IA.
+
+## Decisions worth calling out
+
+- **AIJobs as the single AI ledger.** Every model call — embeddings, Whisper, FLUX, external LLM — writes one row. Cost attribution, debugging, and rate-limit forensics all read from the same table.
+- **Workers AI by default, external LLM for context.** The 24k Llama context isn't a soft limit on this app — it's the hard line that decides routing. If the prompt fits, it stays on Workers AI; if it doesn't, it goes through Gateway.
+- **Vectorize as the recommendation primitive.** No separate recsys service. A taste vector per user + a track vector per song + a small metadata filter covers Made-for-You, similar-tracks, mood mixes, and radio seeding.
+- **Durable Objects for any AI session with memory.** The DJ doesn't restart its persona every track; the Playlist Builder doesn't lose its constraints mid-build. DOs replace what would otherwise be a Redis-backed session store.
+- **Content-addressed AI outputs.** Cover renders, alt-text, and bios all key on their input hash so a re-render is a cache hit, not a re-bill.
