@@ -10,6 +10,7 @@ interface Props {
     size?: "sm" | "lg";
     hover?: boolean;
     eager?: boolean;
+    badge?: string;
 }
 
 const {
@@ -20,6 +21,7 @@ const {
     size = "sm",
     hover = false,
     eager = false,
+    badge,
 } = Astro.props;
 
 const fallbackGradients: CoverGradient[] = [
@@ -124,6 +126,20 @@ const sizes =
                 ]}
             >
                 {title}
+            </span>
+        )
+    }
+    {
+        badge && (
+            <span
+                class:list={[
+                    "absolute top-2.5 right-2.5 rounded-full bg-black/70 text-white backdrop-blur-sm font-medium lowercase tracking-wide",
+                    size === "lg"
+                        ? "text-xs px-2.5 py-1"
+                        : "text-[10px] px-2 py-0.5",
+                ]}
+            >
+                {badge}
             </span>
         )
     }

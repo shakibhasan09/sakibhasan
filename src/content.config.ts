@@ -27,6 +27,7 @@ const projects = defineCollection({
             coverBg: z.string().optional(),
             stars: z.number().default(0),
             type: z.enum(["open-source", "client"]).default("open-source"),
+            badge: z.string().optional(),
             draft: z.boolean().default(false),
         }),
 });
