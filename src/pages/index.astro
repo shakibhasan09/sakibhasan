@@ -81,7 +81,7 @@ const posts = (await getCollection("blog"))
                 >
             </a>
             <a
-                href="https://github.com/shakibhasan09"
+                href="https://github.com/sakibhasandev"
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label="GitHub"
@@ -94,7 +94,7 @@ const posts = (await getCollection("blog"))
                 >
             </a>
             <a
-                href="https://x.com/sakibhasanme09"
+                href="https://x.com/sakibhasandev"
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label="X (Twitter)"
@@ -148,10 +148,7 @@ const posts = (await getCollection("blog"))
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
             {
                 featured.map((project, i) => (
-                    <a
-                        href={`/projects/${project.id}`}
-                        class="group block"
-                    >
+                    <a href={`/projects/${project.id}`} class="group block">
                         <div class="mb-3">
                             <ProjectCover
                                 cover={project.data.cover}
@@ -231,9 +228,7 @@ const posts = (await getCollection("blog"))
             <span class="text-foreground font-medium">postgres</span> &middot;
             <span class="text-foreground font-medium">redis</span> &middot;
             <span class="text-foreground font-medium">docker</span> &middot;
-            <span class="text-foreground font-medium"
-                >cloudflare workers</span
-            > &middot;
+            <span class="text-foreground font-medium">cloudflare workers</span> &middot;
             <span class="text-foreground font-medium">d1</span> &middot;
             <span class="text-foreground font-medium">r2</span> &middot;
             <span class="text-foreground font-medium">kv</span> &middot;
