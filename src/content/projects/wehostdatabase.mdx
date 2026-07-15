@@ -1,0 +1,65 @@
+---
+title: WeHost Database
+description: Managed Postgres and MySQL hosting run from a Cloudflare Workers control plane.
+date: 2026-07-16
+tags: [TanStack Start, React 19, Cloudflare Workers, Durable Objects, D1, Drizzle, Go, Docker, mTLS, WireGuard]
+url: https://wehostdatabase.com
+cover: ../../assets/projects/light/wehostdatabase.png
+coverDark: ../../assets/projects/dark/wehostdatabase.png
+coverBg: "#f9f9f9"
+coverBgDark: "#141414"
+type: client
+---
+
+## The shape
+
+WeHost Database hosts Postgres, MySQL, and MariaDB on single-tenant Linux boxes — pick an engine, a size, and a region, and you get a connection string in under a minute. The part I care about is how it's split. The control plane is one Cloudflare Worker: TanStack Start rendering SSR React 19, D1 with Drizzle for the relational state, Durable Objects for realtime, KV and R2 for secrets and backups. The data plane is a fleet of hosts, each running a single static Go binary that speaks to the local Docker daemon. The control plane never SSHes into anything and never touches a customer database directly. It writes down what the world *should* look like, a Durable Object pushes that desired state to the host's agent, and the agent reconciles Docker until observed matches desired. It's the kubelet model without the Kubernetes, and once you commit to it, most of the hard operational questions become data-modeling questions.
+
+## The agent only ever dials out
+
+A customer's VPS should not have to open an inbound port to be managed, so the agent makes exactly one outbound connection: a WebSocket to the control plane, with capped exponential backoff when it drops. Enrollment trades a one-time join token for an mTLS identity — cert, key, and root CA — which the agent persists to disk at `0600` and reuses across restarts, because the token is single-use and re-enrolling on every boot would fail by design. In production, Cloudflare terminates the mTLS handshake at the edge and the gateway trusts the verified client cert, whose `CN` is the server ID — which is also the routing key that lands the socket on that server's Durable Object. Local dev has no mTLS terminator, so the server ID and cert fingerprint ride as query parameters instead. That seam is explicit in the code rather than hidden, which I've come to think is the honest way to handle "the edge does something dev can't."
+
+On every push the agent converges the whole host: containers (labeled and memory-capped, each instance on its own Docker network and a random host port), logical databases and roles, the pooler sidecar, TLS bundles, WAL archiving, replication wiring, the firewall tier. Overlapping pushes get dropped while a reconcile is in flight, and containers for instances that vanished from desired state get garbage-collected. The port choice is a small thing I like: instances land on a random port in the 10000–30000 range, never the engine default, so a port scan can't cheaply enumerate the fleet.
+
+## There's a certificate authority inside the Worker
+
+The CA is ECDSA P-256 on WebCrypto with `@peculiar/x509`, which means the identical code runs in the Worker, in Node scripts, and under Vitest — no platform branch. One root signs two kinds of leaves: agent certs for the mTLS handshake, and per-instance server certs so customers can connect with `sslmode=verify-full` instead of the `sslmode=require` shrug most hosted databases settle for. The database and its connection pooler present the same cert, so strict verification works on either port. Cert bundles are AES-encrypted into KV under opaque references; D1 only ever stores the reference, never a PEM.
+
+The detail that took real forethought: a replica's certificate already carries the cluster's read-write hostname in its SANs at issue time. When a failover promotes that replica, there's no CA round-trip in the hot path — the cert it's been holding all along is already valid for the name it's about to serve.
+
+## The heartbeat problem
+
+Agents heartbeat every 5 seconds and report observed state every 8. The first version wrote each of those to D1, and when I profiled it, those two UPDATE statements were roughly 20% and 16% of all D1 time — the database was mostly busy recording that nothing had changed. The fix was making writes edge-triggered. Heartbeats now only reach D1 when a server crosses the online/offline boundary, plus a five-minute safety flush. Observed state gets diffed against a cache in the Durable Object's own SQLite, with volatile fields like replication-lag jitter masked out of the comparison key so they can't force spurious writes. The one deliberate exception: when a server goes offline, its final heartbeat is flushed exactly, because the failover grace window counts from that timestamp and an approximation there would be a correctness bug, not a performance win. A DO alarm sweeps every 15 seconds and marks the server offline after 45 seconds of silence.
+
+## Failover without split-brain
+
+The classic HA failure is two Postgres primaries both believing they're it. Here the control plane is the fencing authority, and it leans on the fact that D1 is serialized: electing a new primary is a check-and-set on the cluster row, so two concurrent failovers can't both win. The order is fence first, promote second — the old primary is stopped and stamped fenced *before* the replica gets `pg_promote()`, and if the old box comes back from the dead it stays fenced until an explicit reseed. Failover itself needs two independent gates: the host must be offline *and* the grace window must have elapsed, so a blip doesn't trigger a promotion.
+
+Endpoints are role-stable — the customer's DSN and certificate never change across a failover. The pooled read-write endpoint moves by reconfiguring the pooler, so there's no waiting out a DNS TTL; only the direct-connection record actually flips. And there's a valve I think of as the primary-killer guard: replication slots are capped with `max_slot_wal_keep_size`, so a dead replica can't silently hold WAL until the primary's disk fills. The slot gets invalidated instead, and a monitor cron notices and reseeds the replica automatically.
+
+## Where secrets are allowed to exist
+
+Root passwords, role passwords, replication credentials — all generated control-side, AES-256-GCM encrypted into KV, and referenced from D1 by opaque ref. Plaintext exists in exactly two code paths: injected into desired state at push time (so it only ever crosses the mTLS channel), and revealed to an authorized org member asking for a connection string. Backups follow the same discipline: the agent gets a one-time bearer token minted into KV that authorizes exactly one R2 key, encrypts the dump client-side before upload, and streams it through a Worker proxy. Point-in-time recovery is continuous WAL archiving under a prefix-scoped multi-use token — a token for one instance can't read or write another instance's archive even if it leaks. Join tokens are stored only as SHA-256 hashes, shown once. None of this is exotic; it's just refusing, everywhere, to let D1 become the place secrets live.
+
+## Two agents, one frozen protocol
+
+The wire protocol between control plane and agent lives in its own workspace package, versioned (currently v10) with an additive-only compatibility log. There are two implementations: a TypeScript reference agent that drives real Docker and exists to make end-to-end tests honest, and the production Go binary. Golden fixtures — enroll requests, desired-state payloads, metrics frames — are checked into the protocol package and consumed by both the Vitest suite and a Go golden test, so the two sides can't drift without a test going red. The same spirit shows up in an architecture test that fails CI if an import crosses layer boundaries in the wrong direction. Rules that only live in a doc are suggestions; these are rules.
+
+## The dev/deploy seam, everywhere
+
+The pattern I ended up repeating: every capability that only exists in production gets a named, intentional stand-in for local dev, not a mock bolted on later.
+
+| In production | In local dev |
+|---|---|
+| mTLS verified at Cloudflare's edge | Server ID + cert fingerprint as query params |
+| Analytics Engine for metrics ingest | D1 mirror table |
+| WireGuard mesh for private networking | Shared Docker network |
+| Secrets Store + `wrangler secret bulk` | Generated `.dev.vars`, keys minted once and preserved |
+
+That last cell matters more than it looks: the local bootstrap script regenerates the CA freely but refuses to rotate the AES keys once minted, because rotating a key out from under already-encrypted secrets is the kind of mistake you only make once.
+
+There's also an assistant in the dashboard — a per-user, per-org Durable Object running a model on Workers AI with tools that are tenant-scoped to one organization. Reads never return passwords, and anything mutating (restart, pause, resize, create database) is approval-gated behind an explicit click and replays the exact same reconcile path as the Settings page. The assistant gets no privileged shortcut into the system, which is the only version of this feature I was willing to ship.
+
+## What I'd want the next person to know
+
+Desired-state reconciliation was the decision everything else fell out of. Once the agent is a dumb convergence loop over one outbound socket, provisioning, resize, restart, TLS rotation, and failover all become the same operation: change a row, poke the Durable Object. The heartbeat work is the reminder that D1 bills you in wall-clock time and a 5-second timer is an adversary. And the fencing rule — stop the old primary before you promote the new one, and make the election a serialized check-and-set — is worth being dogmatic about, because every shortcut around it is a split-brain story waiting for production traffic.

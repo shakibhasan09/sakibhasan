@@ -6,13 +6,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build:gradients": "node scripts/build-cover-gradients.mjs",
     "build:og": "node scripts/build-og-image.mjs",
-    "build:assets": "pnpm run build:gradients && pnpm run build:og",
-    "predev": "pnpm run build:assets",
-    "prebuild": "pnpm run build:assets",
-    "prepreview": "pnpm run build:assets",
-    "predeploy": "pnpm run build:assets",
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro build && astro preview",

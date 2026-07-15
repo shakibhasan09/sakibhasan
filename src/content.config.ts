@@ -25,6 +25,7 @@ const projects = defineCollection({
             cover: image().optional(),
             coverDark: image().optional(),
             coverBg: z.string().optional(),
+            coverBgDark: z.string().optional(),
             stars: z.number().default(0),
             type: z.enum(["open-source", "client"]).default("open-source"),
             badge: z.string().optional(),
