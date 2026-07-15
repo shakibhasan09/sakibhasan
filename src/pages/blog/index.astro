@@ -1,12 +1,14 @@
 ---
-import { getCollection } from "astro:content";
 import Layout from "../../layouts/Layout.astro";
+import {
+    buildBreadcrumb,
+    getPublishedPosts,
+    resolveSiteURL,
+} from "@/lib/content";
 
-const posts = (await getCollection("blog"))
-    .filter((post) => !post.data.draft)
-    .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+const posts = await getPublishedPosts();
 
-const siteURL = Astro.site ?? new URL("https://sakibhasan.dev");
+const siteURL = resolveSiteURL(Astro.site);
 
 const blogSchema = {
     "@context": "https://schema.org",
@@ -31,19 +33,10 @@ const blogSchema = {
     })),
 };
 
-const breadcrumb = {
-    "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    itemListElement: [
-        { "@type": "ListItem", position: 1, name: "Home", item: siteURL.href },
-        {
-            "@type": "ListItem",
-            position: 2,
-            name: "Notes",
-            item: new URL("/blog", siteURL).href,
-        },
-    ],
-};
+const breadcrumb = buildBreadcrumb([
+    { name: "Home", item: siteURL.href },
+    { name: "Notes", item: new URL("/blog", siteURL).href },
+]);
 ---
 
 <Layout

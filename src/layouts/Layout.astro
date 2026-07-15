@@ -2,6 +2,7 @@
 import "@/styles/global.css";
 import "@fontsource-variable/rubik";
 import "@fontsource-variable/jetbrains-mono";
+import { resolveSiteURL } from "@/lib/content";
 
 interface Props {
     title?: string;
@@ -31,7 +32,7 @@ const {
     structuredData,
 } = Astro.props;
 
-const siteURL = Astro.site ?? new URL("https://sakibhasan.dev");
+const siteURL = resolveSiteURL(Astro.site);
 const canonicalURL = new URL(Astro.url.pathname, siteURL);
 const imageURL = new URL(image, siteURL);
 

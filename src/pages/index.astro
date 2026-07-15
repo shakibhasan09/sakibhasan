@@ -1,18 +1,11 @@
 ---
 import Layout from "@/layouts/Layout.astro";
 import ProjectCover from "@/components/ProjectCover.astro";
-import { getCollection } from "astro:content";
+import { getPublishedPosts, getPublishedProjects } from "@/lib/content";
 
-const allProjects = (await getCollection("projects"))
-    .filter((project) => !project.data.draft)
-    .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+const featured = (await getPublishedProjects()).slice(0, 4);
 
-const featured = allProjects.slice(0, 4);
-
-const posts = (await getCollection("blog"))
-    .filter((post) => !post.data.draft)
-    .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf())
-    .slice(0, 3);
+const posts = (await getPublishedPosts()).slice(0, 3);
 ---
 
 <Layout
